@@ -32,4 +32,8 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Solo necesario para guardar en Galería en Android 9 o anterior (API 28-);
+         en Android 10+ (API 29+) el sistema no requiere este permiso para crear
+         archivos nuevos en la colección pública de Fotos. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 </manifest>

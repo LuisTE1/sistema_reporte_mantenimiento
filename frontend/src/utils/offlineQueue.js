@@ -1,7 +1,7 @@
 import { get, set } from 'idb-keyval';
 import { supabase } from '../supabaseClient';
 import { Network } from '@capacitor/network';
-import { invalidateCache } from './cache';
+import { invalidateCache, invalidateAllCache } from './cache';
 
 const QUEUE_KEY = 'offline_reports_queue';
 
@@ -155,6 +155,14 @@ export const syncOfflineReports = async () => {
 export const initNetworkListener = () => {
   Network.addListener('networkStatusChange', async status => {
     if (status.connected) {
+      // Al volver la señal, lo cacheado mientras estuvo sin internet puede
+      // haber quedado desactualizado (reportes nuevos de otros usuarios,
+      // etc.). Se borra todo el caché y se avisa a las pantallas abiertas
+      // para que recarguen solas, sin que el usuario tenga que salir y
+      // volver a entrar a la app.
+      invalidateAllCache();
+      window.dispatchEvent(new Event('sm-reconectado'));
+
       const result = await syncOfflineReports();
       if (result.synced > 0) {
         console.log(`✅ Sincronización automática: ${result.synced} reportes enviados.`);

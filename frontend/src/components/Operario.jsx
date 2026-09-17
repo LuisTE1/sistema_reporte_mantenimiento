@@ -15,6 +15,16 @@ import { descargarImagen } from '../utils/download'
 export default function Operario({ onLogout, user, onSwitchView, reportToEdit, setReportToEdit }) {
   const [modulo, setModulo] = useState(null)
   const [isSyncingBtn, setIsSyncingBtn] = useState(false)
+  // Se incrementa cada vez que vuelve la conexión (evento 'sm-reconectado'
+  // disparado desde offlineQueue.js) para forzar que los efectos de abajo
+  // vuelvan a pedir datos frescos, sin que el usuario tenga que salir y
+  // volver a entrar a la pantalla.
+  const [reloadTick, setReloadTick] = useState(0)
+  useEffect(() => {
+    const onReconectado = () => setReloadTick(t => t + 1)
+    window.addEventListener('sm-reconectado', onReconectado)
+    return () => window.removeEventListener('sm-reconectado', onReconectado)
+  }, [])
   
   // Datos Reales de Supabase
   const [estaciones, setEstaciones] = useState([])
@@ -206,7 +216,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
       if (catalogos.carretas) setUnidadesCarretas(catalogos.carretas)
     }
     fetchIniciales()
-  }, [])
+  }, [reloadTick])
 
   useEffect(() => {
     if (modulo === 'visor') {
@@ -234,7 +244,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
       }
       fetchReportes()
     }
-  }, [modulo])
+  }, [modulo, reloadTick])
 
   useEffect(() => {
     let isMounted = true;
@@ -262,6 +272,16 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
           console.error('No se pudo conectar para cargar islas/lados:', err)
         }
         if (!data) data = getCachedStale(cacheKey)
+      }
+
+      if (!data && isMounted) {
+        // Esta estación nunca se cargó con internet antes, así que no hay
+        // nada guardado para mostrar sin conexión: se limpia en vez de dejar
+        // los surtidores de la estación anterior seleccionada.
+        setIslasLados([])
+        setLadoSeleccionado('')
+        setProductosDisponibles([])
+        return
       }
 
       if (data && isMounted) {
@@ -322,6 +342,13 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
         if (!data) data = getCachedStale(cacheKey)
       }
 
+      if (!data && isMounted) {
+        // Igual que con islas/lados: sin caché para esta estación, se limpia
+        // en vez de mostrar el inventario de la estación anterior.
+        setInventario([])
+        return
+      }
+
       if (data && isMounted) {
         setInventario(data)
         if (oldRepuestoText && editingReportId) {
@@ -343,9 +370,9 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
 
     fetchLados()
     fetchInventario()
-    
+
     return () => { isMounted = false; }
-  }, [estacionSeleccionada, estaciones, modulo, oldRepuestoText, editingReportId])
+  }, [estacionSeleccionada, estaciones, modulo, oldRepuestoText, editingReportId, reloadTick])
 
   useEffect(() => {
     // Actualizar los productos cuando se elige un lado específico
@@ -967,7 +994,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
               <div className="form-group">
                 <label>Surtidor / Lado</label>
                 <select value={ladoSeleccionado} onChange={e => setLadoSeleccionado(e.target.value)} required>
-                  <option value="" disabled>Seleccione un Surtidor/Lado...</option>{islasLados.length === 0 && <option value="">No hay lados configurados</option>}
+                  <option value="" disabled>Seleccione un Surtidor/Lado...</option>{islasLados.length === 0 && <option value="">No hay lados configurados (si estás sin internet, entra aquí una vez con señal para guardarlos)</option>}
                   {islasLados.map(il => (
                     <option key={il.id} value={il.id}>Isla {il.isla} - Lado {il.lado}</option>
                   ))}

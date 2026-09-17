@@ -52,3 +52,16 @@ export function invalidateCache(key) {
     // no crítico
   }
 }
+
+// Borra todo lo cacheado (memoria + localStorage). Se usa cuando vuelve la
+// conexión, para forzar que la próxima lectura traiga datos frescos en vez
+// de seguir mostrando lo que se guardó mientras no había señal.
+export function invalidateAllCache() {
+  store.clear()
+  try {
+    const keys = Object.keys(localStorage).filter(k => k.startsWith(LS_PREFIX))
+    keys.forEach(k => localStorage.removeItem(k))
+  } catch (e) {
+    // no crítico
+  }
+}

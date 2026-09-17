@@ -27,17 +27,16 @@ const SIGUIENTES_ESTADOS = {
   'En Proceso': ['Resuelto'],
   'Resuelto': [],
 }
-const ESTADOS_REAPERTURA = ['Pendiente', 'En Proceso']
 
 export default function ReporteSeguimiento({ reporte, user, showAlert, openPreview, onEstadoActualizado }) {
   const [seguimientos, setSeguimientos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
-  const [reabriendo, setReabriendo] = useState(false)
   const [nuevoEstado, setNuevoEstado] = useState(null)
   const [descripcionUpdate, setDescripcionUpdate] = useState('')
   const [fotosUpdate, setFotosUpdate] = useState([])
   const [guardando, setGuardando] = useState(false)
+  const [reabriendo, setReabriendo] = useState(false)
 
   const puedeEditar = !!user.permiso_editar_reportes
   const esCreador = reporte.creado_por === user.nombre
@@ -45,7 +44,7 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
   // permiso de editar reportes puede hacerlo en cualquiera, sin restricción.
   const puedeActualizar = esCreador || puedeEditar
   const estaResuelto = reporte.estado === 'Resuelto'
-  const opcionesEstado = estaResuelto ? ESTADOS_REAPERTURA : (SIGUIENTES_ESTADOS[reporte.estado || 'Pendiente'] || [])
+  const opcionesEstado = SIGUIENTES_ESTADOS[reporte.estado || 'Pendiente'] || []
 
   useEffect(() => {
     let activo = true
@@ -139,7 +138,6 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
       setFotosUpdate([])
       setNuevoEstado(null)
       setMostrarForm(false)
-      setReabriendo(false)
       onEstadoActualizado(nuevoEstado, resueltoEn)
       showAlert('Éxito', 'Se actualizó el estado del reporte.')
     } catch (err) {
@@ -147,6 +145,36 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
       showAlert('Error', 'No se pudo guardar la actualización. Verifica tu conexión e intenta de nuevo.')
     } finally {
       setGuardando(false)
+    }
+  }
+
+  // Reabrir es una acción directa de un click: solo vuelve el reporte a
+  // Pendiente y deja constancia en el historial de quién y cuándo lo reabrió.
+  // Quien deba avanzarlo de nuevo lo hace después con "Actualizar Estado",
+  // eligiendo ahí el estado que corresponda.
+  const handleReabrir = async () => {
+    setReabriendo(true)
+    try {
+      const { data: nuevoRegistro, error: seguimientoError } = await supabase.from('reportes_seguimiento').insert([{
+        reporte_id: reporte.id,
+        estado_nuevo: 'Pendiente',
+        descripcion: 'Reporte reabierto.',
+        fotos: 'Sin foto',
+        creado_por: user.nombre
+      }]).select().single()
+      if (seguimientoError) throw seguimientoError
+
+      const { error: updateError } = await supabase.from('reportes').update({ estado: 'Pendiente', resuelto_en: null }).eq('id', reporte.id)
+      if (updateError) throw updateError
+
+      setSeguimientos(prev => [...prev, nuevoRegistro])
+      onEstadoActualizado('Pendiente', null)
+      showAlert('Reporte reabierto', 'El reporte volvió a estado Pendiente.')
+    } catch (err) {
+      console.error(err)
+      showAlert('Error', 'No se pudo reabrir el reporte. Verifica tu conexión e intenta de nuevo.')
+    } finally {
+      setReabriendo(false)
     }
   }
 
@@ -196,14 +224,14 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
       {!mostrarForm ? (
         estaResuelto ? (
           puedeEditar ? (
-            <button type="button" className="btn-secondary full-width" style={{borderColor: '#f59e0b', color: '#f59e0b'}} onClick={() => { setNuevoEstado(null); setReabriendo(true); setMostrarForm(true) }}>
-              🔓 Reabrir Reporte
+            <button type="button" className="btn-secondary full-width" style={{borderColor: '#f59e0b', color: '#f59e0b'}} disabled={reabriendo} onClick={handleReabrir}>
+              {reabriendo ? 'Reabriendo...' : '🔓 Reabrir Reporte'}
             </button>
           ) : (
             <p className="text-muted" style={{fontSize: '0.85rem', textAlign: 'center'}}>✅ Este reporte ya fue resuelto. Solo un usuario con permiso de editar reportes puede reabrirlo.</p>
           )
         ) : puedeActualizar ? (
-          <button type="button" className="btn-secondary full-width" onClick={() => { setNuevoEstado(null); setReabriendo(false); setMostrarForm(true) }}>
+          <button type="button" className="btn-secondary full-width" onClick={() => { setNuevoEstado(null); setMostrarForm(true) }}>
             🔄 Actualizar Estado
           </button>
         ) : (
@@ -211,7 +239,7 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
         )
       ) : (
         <div style={{background: '#0f172a', padding: '1rem', borderRadius: '8px', border: '1px solid #334155'}}>
-          <label style={{display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#94a3b8'}}>{reabriendo ? 'Reabrir con estado' : 'Nuevo estado'}</label>
+          <label style={{display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#94a3b8'}}>Nuevo estado</label>
           <div style={{display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap'}}>
             {opcionesEstado.map(e => (
               <button
@@ -259,7 +287,7 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
             <button type="button" className="btn-primary" style={{flex: 1}} disabled={guardando} onClick={handleGuardar}>
               {guardando ? 'Guardando...' : 'Guardar Actualización'}
             </button>
-            <button type="button" className="btn-secondary" style={{flex: 1}} disabled={guardando} onClick={() => { setMostrarForm(false); setReabriendo(false) }}>Cancelar</button>
+            <button type="button" className="btn-secondary" style={{flex: 1}} disabled={guardando} onClick={() => setMostrarForm(false)}>Cancelar</button>
           </div>
         </div>
       )}

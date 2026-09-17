@@ -1,5 +1,11 @@
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import { Filesystem, Directory } from '@capacitor/filesystem'
+import { Share } from '@capacitor/share'
+
+// Plugin nativo propio (android/.../GallerySaverPlugin.java): guarda un
+// archivo directo en la Galería de Fotos de Android usando MediaStore, sin
+// pasar por el selector de "Compartir" y sin pedir permisos en Android 10+.
+const GallerySaver = registerPlugin('GallerySaver')
 
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
@@ -10,10 +16,40 @@ function blobToBase64(blob) {
   })
 }
 
+// Android 10+ ya no permite escribir directo a la carpeta pública "Documentos"
+// sin permisos especiales (almacenamiento con ámbito/"scoped storage"). Para
+// fotos usamos el plugin nativo propio GallerySaver, que las inserta directo
+// en la Galería vía MediaStore (sin permisos, sin selector de por medio).
+async function guardarImagenNativa(fileName, blob) {
+  const base64 = await blobToBase64(blob)
+  await GallerySaver.saveBase64Image({ data: base64, fileName, mimeType: blob.type || 'image/jpeg' })
+}
+
+// Para archivos que no son fotos (ej: el respaldo JSON) no aplica MediaStore
+// de imágenes: se guarda en la caché privada de la app y se abre el selector
+// nativo "Compartir/Guardar" para que el usuario elija dónde ponerlo.
+async function guardarArchivoNativo(fileName, blob) {
+  const base64 = await blobToBase64(blob)
+  await Filesystem.writeFile({ path: fileName, data: base64, directory: Directory.Cache })
+  const { uri } = await Filesystem.getUri({ path: fileName, directory: Directory.Cache })
+  await Share.share({ url: uri, dialogTitle: 'Guardar o compartir' })
+}
+
+function descargarWeb(fileName, blob) {
+  const objectUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = objectUrl
+  a.download = fileName
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(objectUrl)
+}
+
 /**
  * Descarga una foto de evidencia al dispositivo.
- * - En el celular (APK): la guarda en la carpeta Documentos de la app,
- *   accesible desde cualquier explorador de archivos del teléfono.
+ * - En el celular (APK): la guarda directo en la Galería de Fotos (álbum
+ *   "ControlOperativo"), sin selector ni permisos de por medio.
  * - En navegador (PC): la descarga como cualquier archivo normal.
  */
 export async function descargarImagen(url, showAlert) {
@@ -25,18 +61,10 @@ export async function descargarImagen(url, showAlert) {
     const fileName = `evidencia_${Date.now()}.${ext}`
 
     if (Capacitor.isNativePlatform()) {
-      const base64 = await blobToBase64(blob)
-      await Filesystem.writeFile({ path: fileName, data: base64, directory: Directory.Documents })
-      showAlert?.('Foto descargada', `Se guardó como "${fileName}" en la carpeta Documentos del celular (visible desde un explorador de archivos).`)
+      await guardarImagenNativa(fileName, blob)
+      showAlert?.('Foto guardada', 'Se guardó en la Galería, en el álbum "ControlOperativo".')
     } else {
-      const objectUrl = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = objectUrl
-      a.download = fileName
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(objectUrl)
+      descargarWeb(fileName, blob)
     }
   } catch (err) {
     console.error('Error descargando imagen:', err)
@@ -53,18 +81,9 @@ export async function descargarTexto(fileName, contenido, mime, showAlert) {
   try {
     const blob = new Blob([contenido], { type: mime })
     if (Capacitor.isNativePlatform()) {
-      const base64 = await blobToBase64(blob)
-      await Filesystem.writeFile({ path: fileName, data: base64, directory: Directory.Documents })
-      showAlert?.('Respaldo descargado', `Se guardó como "${fileName}" en la carpeta Documentos del celular.`)
+      await guardarArchivoNativo(fileName, blob)
     } else {
-      const objectUrl = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = objectUrl
-      a.download = fileName
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(objectUrl)
+      descargarWeb(fileName, blob)
     }
   } catch (err) {
     console.error('Error descargando archivo:', err)
