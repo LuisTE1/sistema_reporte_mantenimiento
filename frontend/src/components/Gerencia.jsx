@@ -74,8 +74,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
   const [dashFiltroProducto, setDashFiltroProducto] = useState('Todos')
   const [dashFiltroFecha, setDashFiltroFecha] = useState({ inicio: '', fin: '' })
   const [dashFiltroRepuesto, setDashFiltroRepuesto] = useState('Todos')
-  const [visorFiltroTracto, setVisorFiltroTracto] = useState('Todos')
-  const [visorFiltroCarreta, setVisorFiltroCarreta] = useState('Todos')
+  const [visorBusquedaPlaca, setVisorBusquedaPlaca] = useState('')
 
   const estacionesPermitidas = user.estaciones === 'Todas' ? estaciones.map(e => e.nombre) : user.estaciones.split(',').map(s=>s.trim()).filter(Boolean)
   
@@ -123,6 +122,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
   const [previewImage, setPreviewImage] = useState(null)
   const [previewGallery, setPreviewGallery] = useState([])
   const [previewIndex, setPreviewIndex] = useState(0)
+  const [previewLoading, setPreviewLoading] = useState(false)
 
   // Abre el visor de fotos a pantalla completa; si el reporte tiene varias
   // evidencias permite pasar de una a otra (como en WhatsApp) sin cerrar
@@ -131,6 +131,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
     const idx = Math.max(0, gallery.indexOf(url))
     setPreviewGallery(gallery)
     setPreviewIndex(idx)
+    setPreviewLoading(true)
     setPreviewImage(url)
   }
   const showPrevPreview = (e) => {
@@ -138,6 +139,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
     if (previewGallery.length < 2) return
     const idx = (previewIndex - 1 + previewGallery.length) % previewGallery.length
     setPreviewIndex(idx)
+    setPreviewLoading(true)
     setPreviewImage(previewGallery[idx])
   }
   const showNextPreview = (e) => {
@@ -145,6 +147,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
     if (previewGallery.length < 2) return
     const idx = (previewIndex + 1) % previewGallery.length
     setPreviewIndex(idx)
+    setPreviewLoading(true)
     setPreviewImage(previewGallery[idx])
   }
   
@@ -1057,26 +1060,15 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
               )}
 
               {visorModulo === 'unidades' && (
-                <div style={{background: '#0f172a', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '1.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
-                  <div style={{flex: '1 1 180px', minWidth: '160px'}}>
-                    <p style={{color: '#94a3b8', fontSize: '0.9rem', marginBottom: '0.5rem'}}>Filtrar por Tracto:</p>
-                    <select value={visorFiltroTracto} onChange={e => setVisorFiltroTracto(e.target.value)} style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}}>
-                      <option value="Todos">Todos</option>
-                      {unidadesTractos.map(t => <option key={t.id} value={t.placa}>{t.placa}</option>)}
-                    </select>
-                  </div>
-                  <div style={{flex: '1 1 180px', minWidth: '160px'}}>
-                    <p style={{color: '#94a3b8', fontSize: '0.9rem', marginBottom: '0.5rem'}}>Filtrar por Carreta:</p>
-                    <select value={visorFiltroCarreta} onChange={e => setVisorFiltroCarreta(e.target.value)} style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}}>
-                      <option value="Todos">Todas</option>
-                      {unidadesCarretas.map(c => <option key={c.id} value={c.placa}>{c.placa}</option>)}
-                    </select>
-                  </div>
-                  {(visorFiltroTracto !== 'Todos' || visorFiltroCarreta !== 'Todos') && (
-                    <div style={{display: 'flex', alignItems: 'flex-end'}}>
-                      <button className="btn-text" style={{padding: '0.5rem 0', fontSize: '0.8rem'}} onClick={() => { setVisorFiltroTracto('Todos'); setVisorFiltroCarreta('Todos') }}>Quitar filtros</button>
-                    </div>
-                  )}
+                <div style={{background: '#0f172a', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '1.5rem'}}>
+                  <p style={{color: '#94a3b8', fontSize: '0.9rem', marginBottom: '0.5rem'}}>Buscar por placa (Tracto o Carreta):</p>
+                  <input
+                    type="text"
+                    value={visorBusquedaPlaca}
+                    onChange={e => setVisorBusquedaPlaca(e.target.value)}
+                    placeholder="Ej: ABC-123"
+                    style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}}
+                  />
                 </div>
               )}
 
@@ -1085,9 +1077,9 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                 const reportesVisorFiltrados = reportes.filter(r => {
                   if (visorModulo === 'unidades') {
                     if (r.modulo !== 'unidades') return false
-                    if (visorFiltroTracto !== 'Todos' && r.tracto_placa !== visorFiltroTracto) return false
-                    if (visorFiltroCarreta !== 'Todos' && r.carreta_placa !== visorFiltroCarreta) return false
-                    return true
+                    const q = visorBusquedaPlaca.trim().toUpperCase()
+                    if (q === '') return true
+                    return (r.tracto_placa || '').toUpperCase().includes(q) || (r.carreta_placa || '').toUpperCase().includes(q)
                   }
                   return r.modulo !== 'unidades' && activeStationsVisor.includes(r.estacion_id)
                 })
@@ -2028,7 +2020,22 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                 <button onClick={showNextPreview} style={{position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', fontSize: '1.8rem', cursor: 'pointer', borderRadius: '50%', width: '48px', height: '48px'}}>›</button>
               </>
             )}
-            <img src={previewImage} alt="Fullscreen Preview" draggable={false} onContextMenu={(e) => e.preventDefault()} style={{maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: '8px'}} onClick={(e) => e.stopPropagation()} />
+            {previewLoading && (
+              <div style={{position: 'absolute', color: 'white', fontSize: '0.9rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem'}}>
+                <div style={{width: '38px', height: '38px', border: '3px solid rgba(255,255,255,0.25)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.8s linear infinite'}} />
+                Cargando foto...
+              </div>
+            )}
+            <img
+              src={previewImage}
+              alt="Fullscreen Preview"
+              draggable={false}
+              onContextMenu={(e) => e.preventDefault()}
+              onLoad={() => setPreviewLoading(false)}
+              onError={() => setPreviewLoading(false)}
+              style={{maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: '8px', opacity: previewLoading ? 0 : 1, transition: 'opacity 0.15s'}}
+              onClick={(e) => e.stopPropagation()}
+            />
           </div>
         )}
     </div>

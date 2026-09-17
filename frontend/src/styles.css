@@ -3,6 +3,11 @@
    Mobile-First • Touch-Optimized • Safe-Area Ready • APK Ready
    ═══════════════════════════════════════════════════════════════ */
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* ─── Design Tokens ─── */
 :root {
   --bg-color: #0f172a;

@@ -4,6 +4,7 @@ import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
 import { addToOfflineQueue, syncOfflineReports } from '../utils/offlineQueue'
 import { Network } from '@capacitor/network'
 import { useBackHandler } from '../utils/backButton'
+import { getCached, setCached, invalidateCache } from '../utils/cache'
 
 const compressImage = (file, maxWidth = 1024, quality = 0.6) => {
   return new Promise((resolve, reject) => {
@@ -92,6 +93,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
   const [previewImage, setPreviewImage] = useState(null)
   const [previewGallery, setPreviewGallery] = useState([])
   const [previewIndex, setPreviewIndex] = useState(0)
+  const [previewLoading, setPreviewLoading] = useState(false)
 
   // Abre el visor de fotos a pantalla completa. Si el reporte tiene varias
   // evidencias, permite pasar de una a otra sin cerrar y volver a abrir
@@ -100,6 +102,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
     const idx = Math.max(0, gallery.indexOf(url))
     setPreviewGallery(gallery)
     setPreviewIndex(idx)
+    setPreviewLoading(true)
     setPreviewImage(url)
   }
   const showPrevPreview = (e) => {
@@ -107,6 +110,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
     if (previewGallery.length < 2) return
     const idx = (previewIndex - 1 + previewGallery.length) % previewGallery.length
     setPreviewIndex(idx)
+    setPreviewLoading(true)
     setPreviewImage(previewGallery[idx])
   }
   const showNextPreview = (e) => {
@@ -114,6 +118,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
     if (previewGallery.length < 2) return
     const idx = (previewIndex + 1) % previewGallery.length
     setPreviewIndex(idx)
+    setPreviewLoading(true)
     setPreviewImage(previewGallery[idx])
   }
   const [reportes, setReportes] = useState([])
@@ -173,8 +178,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
   // Visor de Soluciones
   const [visorModulo, setVisorModulo] = useState('grifo')
   const [filtroEstacion, setFiltroEstacion] = useState('Todas')
-  const [filtroTracto, setFiltroTracto] = useState('Todos')
-  const [filtroCarreta, setFiltroCarreta] = useState('Todos')
+  const [busquedaPlaca, setBusquedaPlaca] = useState('')
   const [reporteModal, setReporteModal] = useState(null)
 
   // Botón físico "Atrás": cierra primero lo más "encima" (lightbox > modales > vista de detalle),
@@ -197,21 +201,29 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
   const [pendingProductoText, setPendingProductoText] = useState(null)
 
   useEffect(() => {
-    // Cargar estaciones cuando se abre el módulo (en paralelo para reducir el tiempo de carga inicial)
+    // Cargar estaciones cuando se abre el módulo (en paralelo para reducir el tiempo de carga inicial).
+    // Estos catálogos casi no cambian, así que se cachean unos minutos para
+    // no volver a pedirlos cada vez que se entra/sale de un módulo.
     const fetchIniciales = async () => {
-      const [estRes, mtRes, trRes, caRes] = await Promise.all([
-        supabase.from('estaciones').select('*'),
-        supabase.from('mantenimiento_tipos').select('*').order('id'),
-        supabase.from('unidades_tractos').select('*').order('placa'),
-        supabase.from('unidades_carretas').select('*').order('placa'),
-      ])
-      if (estRes.data) {
-        const permitidas = user.estaciones === 'Todas' ? estRes.data : estRes.data.filter(e => user.estaciones.includes(e.nombre))
+      const cacheKey = 'operario_catalogos'
+      let catalogos = getCached(cacheKey, 5 * 60 * 1000)
+      if (!catalogos) {
+        const [estRes, mtRes, trRes, caRes] = await Promise.all([
+          supabase.from('estaciones').select('*'),
+          supabase.from('mantenimiento_tipos').select('*').order('id'),
+          supabase.from('unidades_tractos').select('*').order('placa'),
+          supabase.from('unidades_carretas').select('*').order('placa'),
+        ])
+        catalogos = { estaciones: estRes.data, mantenimiento: mtRes.data, tractos: trRes.data, carretas: caRes.data }
+        setCached(cacheKey, catalogos)
+      }
+      if (catalogos.estaciones) {
+        const permitidas = user.estaciones === 'Todas' ? catalogos.estaciones : catalogos.estaciones.filter(e => user.estaciones.includes(e.nombre))
         setEstaciones(permitidas)
       }
-      if (mtRes.data) setMantenimientoTipos(mtRes.data)
-      if (trRes.data) setUnidadesTractos(trRes.data)
-      if (caRes.data) setUnidadesCarretas(caRes.data)
+      if (catalogos.mantenimiento) setMantenimientoTipos(catalogos.mantenimiento)
+      if (catalogos.tractos) setUnidadesTractos(catalogos.tractos)
+      if (catalogos.carretas) setUnidadesCarretas(catalogos.carretas)
     }
     fetchIniciales()
   }, [])
@@ -219,7 +231,13 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
   useEffect(() => {
     if (modulo === 'visor') {
       const fetchReportes = async () => {
-        const { data } = await supabase.from('reportes').select('*').order('creado_en', { ascending: false })
+        const cacheKey = 'operario_reportes'
+        let data = getCached(cacheKey, 60 * 1000)
+        if (!data) {
+          const res = await supabase.from('reportes').select('*').order('creado_en', { ascending: false })
+          data = res.data
+          if (data) setCached(cacheKey, data)
+        }
         if (data) {
           if (user.estaciones !== 'Todas') {
             const permitidas = user.estaciones.split(',').map(s => s.trim())
@@ -561,6 +579,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
         showAlert('Error', 'No se pudo guardar. Verifica tu conexión e intenta de nuevo.')
       } else {
         const isEdit = !!editingReportId
+        invalidateCache('operario_reportes')
         showAlert('Éxito', isEdit ? '¡Reporte actualizado exitosamente!' : '¡Reporte guardado exitosamente!', isEdit)
         setFotos([])
         setDescripcion('')
@@ -593,6 +612,69 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
     setFechaSuceso(formatDateTimeLocal(new Date()))
     setModulo(type)
   }
+
+  // Este componente renderiza una pantalla distinta según "modulo" con varios
+  // "return" separados. Antes, el modal de alertas y el visor de fotos a
+  // pantalla completa solo estaban dentro de UNO de esos "return": si se
+  // abrían desde otra pantalla (ej: una foto desde el Visor de Soluciones),
+  // el estado cambiaba pero no había nada ahí para mostrarlo — recién se
+  // veía si luego se entraba a una pantalla que sí los incluía. Por eso se
+  // sacan aquí como funciones y se agregan a CADA pantalla.
+  const renderAppModal = () => appModal.isOpen && (
+    <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: '1rem'}}>
+      <div style={{background: '#0f172a', padding: '2rem', borderRadius: '12px', border: '1px solid #3b82f6', width: '100%', maxWidth: '400px', textAlign: 'center'}}>
+        <h3 style={{marginBottom: '1rem', color: appModal.title === 'Error' || appModal.title === 'Atención' || appModal.title === 'Stock Insuficiente' ? '#ef4444' : '#3b82f6'}}>{appModal.title}</h3>
+        <p style={{marginBottom: '2rem', color: '#e2e8f0'}}>{appModal.message}</p>
+        <div style={{display: 'flex', gap: '1rem'}}>
+          {appModal.isEditSuccess ? (
+            <button className="btn-primary" style={{flex: 1}} onClick={() => {
+              setAppModal({...appModal, isOpen: false})
+              if (user.rol !== 'Operario' && onSwitchView) onSwitchView()
+              else setModulo(null)
+            }}>Volver al Visor de Soluciones</button>
+          ) : (
+            <>
+              <button className="btn-primary" style={{flex: 1}} onClick={() => setAppModal({...appModal, isOpen: false})}>Entendido</button>
+              {appModal.title === 'Éxito' && (
+                <button className="btn-secondary" style={{flex: 1}} onClick={() => { setAppModal({...appModal, isOpen: false}); setModulo(null); }}>Volver al Menú</button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+
+  const renderPreviewLightbox = () => previewImage && (
+    <div style={{position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.9)', zIndex: 10000, display: 'flex', justifyContent: 'center', alignItems: 'center'}} onClick={() => setPreviewImage(null)}>
+      <button style={{position: 'absolute', top: '20px', right: '20px', background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', fontSize: '2rem', cursor: 'pointer', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1}} onClick={() => setPreviewImage(null)}>×</button>
+      {previewGallery.length > 1 && (
+        <>
+          <div style={{position: 'absolute', top: '20px', left: '50%', transform: 'translateX(-50%)', color: 'white', fontSize: '0.9rem', background: 'rgba(255,255,255,0.15)', padding: '0.25rem 0.75rem', borderRadius: '999px'}}>
+            {previewIndex + 1} / {previewGallery.length}
+          </div>
+          <button onClick={showPrevPreview} style={{position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', fontSize: '1.8rem', cursor: 'pointer', borderRadius: '50%', width: '48px', height: '48px'}}>‹</button>
+          <button onClick={showNextPreview} style={{position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', fontSize: '1.8rem', cursor: 'pointer', borderRadius: '50%', width: '48px', height: '48px'}}>›</button>
+        </>
+      )}
+      {previewLoading && (
+        <div style={{position: 'absolute', color: 'white', fontSize: '0.9rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem'}}>
+          <div style={{width: '38px', height: '38px', border: '3px solid rgba(255,255,255,0.25)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.8s linear infinite'}} />
+          Cargando foto...
+        </div>
+      )}
+      <img
+        src={previewImage}
+        alt="Fullscreen Preview"
+        draggable={false}
+        onContextMenu={(e) => e.preventDefault()}
+        onLoad={() => setPreviewLoading(false)}
+        onError={() => setPreviewLoading(false)}
+        style={{maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: '8px', opacity: previewLoading ? 0 : 1, transition: 'opacity 0.15s'}}
+        onClick={(e) => e.stopPropagation()}
+      />
+    </div>
+  )
 
   if (!modulo) {
     return (
@@ -654,6 +736,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
           </div>
           <button className="btn-text full-width mt-4" onClick={() => window.confirm('¿Desea cerrar sesión?') && onLogout()}>Cerrar Sesión</button>
         </div>
+        {renderAppModal()}
       </div>
     )
   }
@@ -661,10 +744,12 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
   if (modulo === 'visor') {
     const reportesDelModulo = reportes.filter(r => visorModulo === 'unidades' ? r.modulo === 'unidades' : r.modulo !== 'unidades')
     const reportesFiltrados = visorModulo === 'unidades'
-      ? reportesDelModulo.filter(r =>
-          (filtroTracto === 'Todos' || r.tracto_placa === filtroTracto) &&
-          (filtroCarreta === 'Todos' || r.carreta_placa === filtroCarreta)
-        )
+      ? (busquedaPlaca.trim() === ''
+          ? reportesDelModulo
+          : reportesDelModulo.filter(r => {
+              const q = busquedaPlaca.trim().toUpperCase()
+              return (r.tracto_placa || '').toUpperCase().includes(q) || (r.carreta_placa || '').toUpperCase().includes(q)
+            }))
       : (filtroEstacion === 'Todas' ? reportesDelModulo : reportesDelModulo.filter(r => r.estacion_id === filtroEstacion))
     const opcionesEstaciones = ['Todas', ...Array.from(new Set(reportesDelModulo.map(r => r.estacion_id)))]
 
@@ -702,21 +787,15 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
           )}
 
           {visorModulo === 'unidades' && (
-            <div style={{marginBottom: '1.5rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap'}}>
-              <div style={{flex: '1 1 140px'}}>
-                <label style={{display: 'block', marginBottom: '0.5rem', color: '#94a3b8', fontSize: '0.9rem'}}>Filtrar por Tracto</label>
-                <select value={filtroTracto} onChange={e => setFiltroTracto(e.target.value)} style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}}>
-                  <option value="Todos">Todos</option>
-                  {unidadesTractos.map(t => <option key={t.id} value={t.placa}>{t.placa}</option>)}
-                </select>
-              </div>
-              <div style={{flex: '1 1 140px'}}>
-                <label style={{display: 'block', marginBottom: '0.5rem', color: '#94a3b8', fontSize: '0.9rem'}}>Filtrar por Carreta</label>
-                <select value={filtroCarreta} onChange={e => setFiltroCarreta(e.target.value)} style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}}>
-                  <option value="Todos">Todas</option>
-                  {unidadesCarretas.map(c => <option key={c.id} value={c.placa}>{c.placa}</option>)}
-                </select>
-              </div>
+            <div style={{marginBottom: '1.5rem'}}>
+              <label style={{display: 'block', marginBottom: '0.5rem', color: '#94a3b8', fontSize: '0.9rem'}}>Buscar por placa (Tracto o Carreta)</label>
+              <input
+                type="text"
+                value={busquedaPlaca}
+                onChange={e => setBusquedaPlaca(e.target.value)}
+                placeholder="Ej: ABC-123"
+                style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}}
+              />
             </div>
           )}
 
@@ -827,31 +906,8 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
           </div>
         )}
         
-        {/* Modal Universal para Alertas (Pantalla Principal Operario) */}
-        {appModal.isOpen && (
-          <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: '1rem'}}>
-            <div style={{background: '#0f172a', padding: '2rem', borderRadius: '12px', border: '1px solid #3b82f6', width: '100%', maxWidth: '400px', textAlign: 'center'}}>
-              <h3 style={{marginBottom: '1rem', color: appModal.title === 'Error' || appModal.title === 'Atención' || appModal.title === 'Stock Insuficiente' ? '#ef4444' : '#3b82f6'}}>{appModal.title}</h3>
-              <p style={{marginBottom: '2rem', color: '#e2e8f0'}}>{appModal.message}</p>
-              <div style={{display: 'flex', gap: '1rem'}}>
-                {appModal.isEditSuccess ? (
-                  <button className="btn-primary" style={{flex: 1}} onClick={() => {
-                    setAppModal({...appModal, isOpen: false})
-                    if (user.rol !== 'Operario' && onSwitchView) onSwitchView()
-                    else setModulo(null)
-                  }}>Volver al Visor de Soluciones</button>
-                ) : (
-                  <>
-                    <button className="btn-primary" style={{flex: 1}} onClick={() => setAppModal({...appModal, isOpen: false})}>Entendido</button>
-                    {appModal.title === 'Éxito' && (
-                      <button className="btn-secondary" style={{flex: 1}} onClick={() => { setAppModal({...appModal, isOpen: false}); setModulo(null); }}>Volver al Menú</button>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        {renderAppModal()}
+        {renderPreviewLightbox()}
       </div>
     )
   }
@@ -1023,47 +1079,8 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
         </form>
       </main>
 
-      {/* Modal Universal para Alertas (Dentro del Formulario) */}
-      {appModal.isOpen && (
-        <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: '1rem'}}>
-          <div style={{background: '#0f172a', padding: '2rem', borderRadius: '12px', border: '1px solid #3b82f6', width: '100%', maxWidth: '400px', textAlign: 'center'}}>
-            <h3 style={{marginBottom: '1rem', color: appModal.title === 'Error' || appModal.title === 'Atención' || appModal.title === 'Stock Insuficiente' ? '#ef4444' : '#3b82f6'}}>{appModal.title}</h3>
-            <p style={{marginBottom: '2rem', color: '#e2e8f0'}}>{appModal.message}</p>
-            <div style={{display: 'flex', gap: '1rem'}}>
-              {appModal.isEditSuccess ? (
-                <button className="btn-primary" style={{flex: 1}} onClick={() => {
-                  setAppModal({...appModal, isOpen: false})
-                  if (user.rol !== 'Operario' && onSwitchView) onSwitchView()
-                  else setModulo(null)
-                }}>Volver al Visor de Soluciones</button>
-              ) : (
-                <>
-                  <button className="btn-primary" style={{flex: 1}} onClick={() => setAppModal({...appModal, isOpen: false})}>Entendido</button>
-                  {appModal.title === 'Éxito' && (
-                    <button className="btn-secondary" style={{flex: 1}} onClick={() => { setAppModal({...appModal, isOpen: false}); setModulo(null); }}>Volver al Menú</button>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-      {/* Lightbox para previsualización a pantalla completa */}
-      {previewImage && (
-        <div style={{position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.9)', zIndex: 10000, display: 'flex', justifyContent: 'center', alignItems: 'center'}} onClick={() => setPreviewImage(null)}>
-          <button style={{position: 'absolute', top: '20px', right: '20px', background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', fontSize: '2rem', cursor: 'pointer', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1}} onClick={() => setPreviewImage(null)}>×</button>
-          {previewGallery.length > 1 && (
-            <>
-              <div style={{position: 'absolute', top: '20px', left: '50%', transform: 'translateX(-50%)', color: 'white', fontSize: '0.9rem', background: 'rgba(255,255,255,0.15)', padding: '0.25rem 0.75rem', borderRadius: '999px'}}>
-                {previewIndex + 1} / {previewGallery.length}
-              </div>
-              <button onClick={showPrevPreview} style={{position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', fontSize: '1.8rem', cursor: 'pointer', borderRadius: '50%', width: '48px', height: '48px'}}>‹</button>
-              <button onClick={showNextPreview} style={{position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', fontSize: '1.8rem', cursor: 'pointer', borderRadius: '50%', width: '48px', height: '48px'}}>›</button>
-            </>
-          )}
-          <img src={previewImage} alt="Fullscreen Preview" draggable={false} onContextMenu={(e) => e.preventDefault()} style={{maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: '8px'}} onClick={(e) => e.stopPropagation()} />
-        </div>
-      )}
+      {renderAppModal()}
+      {renderPreviewLightbox()}
     </div>
   )
 }

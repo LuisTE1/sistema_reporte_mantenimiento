@@ -1,6 +1,7 @@
 import { get, set } from 'idb-keyval';
 import { supabase } from '../supabaseClient';
 import { Network } from '@capacitor/network';
+import { invalidateCache } from './cache';
 
 const QUEUE_KEY = 'offline_reports_queue';
 
@@ -135,6 +136,7 @@ export const syncOfflineReports = async () => {
         await set(QUEUE_KEY, currentQueue);
       } else {
         syncedCount++;
+        invalidateCache('operario_reportes');
       }
 
     } catch (err) {
