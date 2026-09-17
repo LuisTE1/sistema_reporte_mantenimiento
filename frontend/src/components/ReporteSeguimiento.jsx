@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
+import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
 import { compressImage } from '../utils/image'
 import { colorDeEstado, diasTranscurridos } from '../utils/estado'
 
@@ -39,6 +40,10 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
   const [guardando, setGuardando] = useState(false)
 
   const puedeEditar = !!user.permiso_editar_reportes
+  const esCreador = reporte.creado_por === user.nombre
+  // Solo quien creó el reporte puede darle seguimiento normal; quien tiene
+  // permiso de editar reportes puede hacerlo en cualquiera, sin restricción.
+  const puedeActualizar = esCreador || puedeEditar
   const estaResuelto = reporte.estado === 'Resuelto'
   const opcionesEstado = estaResuelto ? ESTADOS_REAPERTURA : (SIGUIENTES_ESTADOS[reporte.estado || 'Pendiente'] || [])
 
@@ -62,6 +67,25 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
       return { file: comprimido, preview: URL.createObjectURL(comprimido) }
     }))
     setFotosUpdate(prev => [...prev, ...nuevas])
+  }
+
+  const tomarFotoUpdate = async () => {
+    try {
+      const image = await Camera.getPhoto({
+        quality: 90,
+        allowEditing: false,
+        resultType: CameraResultType.Uri,
+        source: CameraSource.Prompt
+      })
+      const response = await fetch(image.webPath)
+      const blob = await response.blob()
+      const rawFile = new File([blob], `foto_${Date.now()}.${image.format}`, { type: `image/${image.format}` })
+      let comprimido = rawFile
+      try { comprimido = await compressImage(rawFile) } catch (err) { console.error(err) }
+      setFotosUpdate(prev => [...prev, { file: comprimido, preview: URL.createObjectURL(comprimido) }])
+    } catch (error) {
+      console.log('Camera error or user cancelled:', error)
+    }
   }
 
   const removeFotoUpdate = (i) => {
@@ -178,10 +202,12 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
           ) : (
             <p className="text-muted" style={{fontSize: '0.85rem', textAlign: 'center'}}>✅ Este reporte ya fue resuelto. Solo un usuario con permiso de editar reportes puede reabrirlo.</p>
           )
-        ) : (
+        ) : puedeActualizar ? (
           <button type="button" className="btn-secondary full-width" onClick={() => { setNuevoEstado(null); setReabriendo(false); setMostrarForm(true) }}>
             🔄 Actualizar Estado
           </button>
+        ) : (
+          <p className="text-muted" style={{fontSize: '0.85rem', textAlign: 'center'}}>Solo quien creó este reporte ({reporte.creado_por}) o un usuario con permiso de editar reportes puede actualizar su estado.</p>
         )
       ) : (
         <div style={{background: '#0f172a', padding: '1rem', borderRadius: '8px', border: '1px solid #334155'}}>
@@ -213,6 +239,10 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
           />
 
           <label style={{display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#94a3b8'}}>Fotos (opcional)</label>
+          <button type="button" onClick={tomarFotoUpdate} className="btn-primary" style={{width: '100%', padding: '0.6rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', marginBottom: '0.5rem'}}>
+            📸 Tomar Foto Nativa
+          </button>
+          <div style={{fontSize: '0.8rem', color: '#64748b', marginBottom: '0.5rem'}}>O subir desde archivos:</div>
           <input type="file" multiple accept="image/*" onChange={handleFotosUpdate} style={{color: 'white', width: '100%', marginBottom: '0.75rem'}} />
           {fotosUpdate.length > 0 && (
             <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem'}}>

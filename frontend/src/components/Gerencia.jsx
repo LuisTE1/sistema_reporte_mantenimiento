@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import { useBackHandler } from '../utils/backButton'
 import { colorDeEstado, diasTranscurridos } from '../utils/estado'
+import { generarCodigoUsuario } from '../utils/usuario'
 import ReporteSeguimiento from './ReporteSeguimiento'
 import ZoomableImage from './ZoomableImage'
+import { descargarImagen } from '../utils/download'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -104,7 +106,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
   
   const [editingUser, setEditingUser] = useState(null)
   const [nuevaPasswordEdit, setNuevaPasswordEdit] = useState('')
-  const [nuevoUsuario, setNuevoUsuario] = useState({ nombre: '', password: '', rol: 'Operario', estaciones: 'Todas' })
+  const [nuevoUsuario, setNuevoUsuario] = useState({ nombres: '', apellidos: '', password: '', rol: 'Operario', estaciones: 'Todas' })
 
   // Estado para Modal de Crear Estación
   const [estacionModal, setEstacionModal] = useState({ 
@@ -139,7 +141,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
     setPreviewImage(url)
   }
   const showPrevPreview = (e) => {
-    e.stopPropagation()
+    e?.stopPropagation()
     if (previewGallery.length < 2) return
     const idx = (previewIndex - 1 + previewGallery.length) % previewGallery.length
     setPreviewIndex(idx)
@@ -147,7 +149,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
     setPreviewImage(previewGallery[idx])
   }
   const showNextPreview = (e) => {
-    e.stopPropagation()
+    e?.stopPropagation()
     if (previewGallery.length < 2) return
     const idx = (previewIndex + 1) % previewGallery.length
     setPreviewIndex(idx)
@@ -295,13 +297,28 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
   // CRUD USUARIOS
   const handleCreateUser = async (e) => {
     e.preventDefault()
-    const { data, error } = await supabase.from('usuarios').insert([nuevoUsuario]).select()
+    if (!nuevoUsuario.nombres.trim() || !nuevoUsuario.apellidos.trim()) {
+      showAlert('Atención', 'Ingresa nombres y apellidos.')
+      return
+    }
+    // El usuario/código de acceso se genera solo a partir del nombre y
+    // apellido, y nunca se repite (a diferencia de antes, que se escribía
+    // un "nombre" cualquiera a mano y podía chocar o confundirse entre
+    // personas distintas).
+    const codigo = generarCodigoUsuario(nuevoUsuario.nombres, nuevoUsuario.apellidos, usuarios.map(u => u.nombre))
+    const { data, error } = await supabase.from('usuarios').insert([{
+      nombre: codigo,
+      nombre_completo: `${nuevoUsuario.nombres.trim()} ${nuevoUsuario.apellidos.trim()}`,
+      password: nuevoUsuario.password,
+      rol: nuevoUsuario.rol,
+      estaciones: nuevoUsuario.estaciones,
+    }]).select()
     if (error) {
       showAlert('Error', 'Error creando usuario: ' + error.message)
     } else {
       setUsuarios([...usuarios, data[0]])
-      setNuevoUsuario({ nombre: '', password: '', rol: 'Operario', estaciones: 'Todas' })
-      showAlert('Éxito', 'Usuario creado exitosamente')
+      setNuevoUsuario({ nombres: '', apellidos: '', password: '', rol: 'Operario', estaciones: 'Todas' })
+      showAlert('Éxito', `Usuario creado. Su código de acceso para ingresar a la app es: ${codigo}`)
     }
   }
 
@@ -1379,7 +1396,8 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                   <div style={{marginBottom: '2rem', padding: '1.5rem', background: '#0f172a', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)'}}>
                     <h3 style={{marginBottom: '1rem'}}>Crear Nuevo Usuario</h3>
                     <form onSubmit={handleCreateUser} style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
-                      <input type="text" placeholder="Nombre (ej: LUIS)" value={nuevoUsuario.nombre} onChange={e=>setNuevoUsuario({...nuevoUsuario, nombre: e.target.value.toUpperCase()})} required style={{flex: 1, minWidth: '150px'}} />
+                      <input type="text" placeholder="Nombres (ej: Juan)" value={nuevoUsuario.nombres} onChange={e=>setNuevoUsuario({...nuevoUsuario, nombres: e.target.value})} required style={{flex: 1, minWidth: '150px'}} />
+                      <input type="text" placeholder="Apellidos (ej: Pérez)" value={nuevoUsuario.apellidos} onChange={e=>setNuevoUsuario({...nuevoUsuario, apellidos: e.target.value})} required style={{flex: 1, minWidth: '150px'}} />
                       <input type="password" placeholder="Contraseña" value={nuevoUsuario.password} onChange={e=>setNuevoUsuario({...nuevoUsuario, password: e.target.value})} required style={{flex: 1, minWidth: '150px'}} />
                       <select value={nuevoUsuario.rol} onChange={e=>setNuevoUsuario({...nuevoUsuario, rol: e.target.value})} style={{flex: 1, minWidth: '150px'}}>
                         <option>Operario</option>
@@ -1401,7 +1419,10 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                         {usuarios.map(u => (
                           <tr key={u.id}>
                             <td>{u.id}</td>
-                            <td>{u.nombre}</td>
+                            <td>
+                              <strong>{u.nombre}</strong>
+                              {u.nombre_completo && <div style={{fontSize: '0.75rem', color: '#94a3b8'}}>{u.nombre_completo}</div>}
+                            </td>
                             <td>{u.rol}</td>
                             <td style={{fontSize: '0.8rem', color: '#94a3b8'}}>
                               {[u.permiso_dashboard && 'Dashboard', u.permiso_inventario && 'Inventario', u.permiso_soluciones && 'Soluciones', u.permiso_config && 'Config'].filter(Boolean).join(', ') || 'Ninguno'}
@@ -2082,16 +2103,15 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
 
       </main>
         {previewImage && (
-          <div style={{position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.9)', zIndex: 10000, display: 'flex', justifyContent: 'center', alignItems: 'center'}} onClick={() => setPreviewImage(null)}>
-            <button style={{position: 'absolute', top: '20px', right: '20px', background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', fontSize: '2rem', cursor: 'pointer', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1}} onClick={() => setPreviewImage(null)}>×</button>
+          <div style={{position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.9)', zIndex: 10000, display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden'}} onClick={() => setPreviewImage(null)}>
+            <div style={{position: 'absolute', top: '20px', right: '20px', display: 'flex', gap: '0.5rem', zIndex: 1}}>
+              <button title="Descargar foto" onClick={(e) => { e.stopPropagation(); descargarImagen(previewImage, showAlert) }} style={{background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', fontSize: '1.4rem', cursor: 'pointer', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>⬇</button>
+              <button style={{background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', fontSize: '2rem', cursor: 'pointer', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center'}} onClick={() => setPreviewImage(null)}>×</button>
+            </div>
             {previewGallery.length > 1 && (
-              <>
-                <div style={{position: 'absolute', top: '20px', left: '50%', transform: 'translateX(-50%)', color: 'white', fontSize: '0.9rem', background: 'rgba(255,255,255,0.15)', padding: '0.25rem 0.75rem', borderRadius: '999px'}}>
-                  {previewIndex + 1} / {previewGallery.length}
-                </div>
-                <button onClick={showPrevPreview} style={{position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', fontSize: '1.8rem', cursor: 'pointer', borderRadius: '50%', width: '48px', height: '48px'}}>‹</button>
-                <button onClick={showNextPreview} style={{position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', fontSize: '1.8rem', cursor: 'pointer', borderRadius: '50%', width: '48px', height: '48px'}}>›</button>
-              </>
+              <div style={{position: 'absolute', top: '20px', left: '50%', transform: 'translateX(-50%)', color: 'white', fontSize: '0.9rem', background: 'rgba(255,255,255,0.15)', padding: '0.25rem 0.75rem', borderRadius: '999px'}}>
+                {previewIndex + 1} / {previewGallery.length}
+              </div>
             )}
             {previewLoading && (
               <div style={{position: 'absolute', color: 'white', fontSize: '0.9rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem'}}>
@@ -2105,6 +2125,8 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
               onContextMenu={(e) => e.preventDefault()}
               onLoad={() => setPreviewLoading(false)}
               onError={() => setPreviewLoading(false)}
+              onSwipeLeft={previewGallery.length > 1 ? showNextPreview : undefined}
+              onSwipeRight={previewGallery.length > 1 ? showPrevPreview : undefined}
               style={{maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: '8px', opacity: previewLoading ? 0 : 1, transition: 'opacity 0.15s'}}
             />
           </div>
