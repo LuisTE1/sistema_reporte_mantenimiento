@@ -4,6 +4,7 @@ import { useBackHandler } from '../utils/backButton'
 import { colorDeEstado, diasTranscurridos } from '../utils/estado'
 import { generarCodigoUsuario } from '../utils/usuario'
 import ReporteSeguimiento from './ReporteSeguimiento'
+import MantenimientoSistema from './MantenimientoSistema'
 import ZoomableImage from './ZoomableImage'
 import { descargarImagen } from '../utils/download'
 import {
@@ -497,6 +498,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
           {user.permisos.config && <button className={tab === 'usuarios' ? 'active' : ''} onClick={() => { setTab('usuarios'); setIsMobileMenuOpen(false) }}>👥 {!isSidebarCollapsed && 'Accesos (ABAC)'}</button>}
           {user.permisos.config && <button className={tab === 'mantenimiento' ? 'active' : ''} onClick={() => { setTab('mantenimiento'); setIsMobileMenuOpen(false) }}>🛠️ {!isSidebarCollapsed && 'Catálogo de Mantenimiento'}</button>}
           {user.permisos.config && <button className={tab === 'config' ? 'active' : ''} onClick={() => { setTab('config'); setIsMobileMenuOpen(false) }}>⚙️ {!isSidebarCollapsed && 'Configuración Estaciones'}</button>}
+          {user.permisos.config && <button className={tab === 'sistema' ? 'active' : ''} onClick={() => { setTab('sistema'); setIsMobileMenuOpen(false) }}>🩺 {!isSidebarCollapsed && 'Mantenimiento del Sistema'}</button>}
           
           <div style={{borderTop: '1px solid rgba(255,255,255,0.1)', margin: '1rem 0'}}></div>
           <button onClick={onSwitchView} style={{background: '#1e293b', border: '1px solid #3b82f6'}}>📱 {!isSidebarCollapsed && 'Modo Operario'}</button>
@@ -882,6 +884,21 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                       </div>
                       <span style={{fontSize: '0.8rem', color: '#cbd5e1', display: 'block', marginTop: '0.5rem'}}>Regresión Lineal a 7 días</span>
                     </div>
+                    {(() => {
+                      const resueltos = reportesFiltrados.filter(r => r.estado === 'Resuelto' && r.resuelto_en)
+                      const promedioDias = resueltos.length > 0
+                        ? (resueltos.reduce((sum, r) => sum + diasTranscurridos(r.creado_en, r.resuelto_en), 0) / resueltos.length).toFixed(1)
+                        : null
+                      return (
+                        <div className="metric-card premium-card" style={{borderLeft: '4px solid #22d3ee'}}>
+                          <h3 style={{color: '#94a3b8', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px'}}>Eficiencia de Resolución</h3>
+                          <div className="value" style={{color: '#22d3ee', fontSize: '2rem', fontWeight: 'bold'}}>
+                            {promedioDias ?? 'N/A'}{promedioDias && <span style={{fontSize: '1rem'}}> días</span>}
+                          </div>
+                          <span style={{fontSize: '0.8rem', color: '#cbd5e1'}}>Promedio para resolver ({resueltos.length} reporte{resueltos.length === 1 ? '' : 's'} resuelto{resueltos.length === 1 ? '' : 's'})</span>
+                        </div>
+                      )
+                    })()}
                   </div>
 
                   {/* Grilla de Gráficos de Inteligencia de Negocios (BI) - Estilo Power BI */}
@@ -2099,6 +2116,10 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                 </div>
               </div>
             </div>
+          )}
+
+          {tab === 'sistema' && (
+            <MantenimientoSistema user={user} showAlert={showAlert} showConfirm={showConfirm} />
           )}
 
       </main>

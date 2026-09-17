@@ -6,12 +6,17 @@ import Operario from './components/Operario'
 import Gerencia from './components/Gerencia'
 import { initNetworkListener, syncOfflineReports } from './utils/offlineQueue'
 import { handleBack } from './utils/backButton'
+import { setUsuarioParaErrores } from './utils/errorLogger'
 
 export default function App() {
   const [user, setUser] = useState(() => {
     const saved = localStorage.getItem('auth_user')
     return saved ? JSON.parse(saved) : null
   })
+
+  useEffect(() => {
+    setUsuarioParaErrores(user?.nombre || null)
+  }, [user])
   const [viewMode, setViewMode] = useState('operario') // 'operario' o 'gerencia'
   const [reportToEdit, setReportToEdit] = useState(null)
   const [showExitHint, setShowExitHint] = useState(false)
@@ -54,10 +59,24 @@ export default function App() {
     }
   }, [])
 
+  // Recuerda la última pantalla que cada usuario usó (ej: si un Operario con
+  // acceso a Dashboard entra al Panel Administrativo, la próxima vez que
+  // abra la app entra directo ahí en vez de tener que volver a buscarlo).
+  const setViewModePersisted = (mode) => {
+    setViewMode(mode)
+    if (user?.nombre) localStorage.setItem(`viewMode_${user.nombre}`, mode)
+  }
+
   useEffect(() => {
     if (user) {
-      if (user.rol === 'Operario') setViewMode('operario')
-      else setViewMode('gerencia')
+      const recordado = localStorage.getItem(`viewMode_${user.nombre}`)
+      if (recordado === 'operario' || recordado === 'gerencia') {
+        setViewMode(recordado)
+      } else if (user.rol === 'Operario') {
+        setViewMode('operario')
+      } else {
+        setViewMode('gerencia')
+      }
 
       // Escuchar cambios en la base de datos EN TIEMPO REAL
       const subscription = supabase
@@ -112,14 +131,14 @@ export default function App() {
 
   if (viewMode === 'operario') {
     return <>
-      <Operario onLogout={handleLogout} user={user} onSwitchView={() => setViewMode('gerencia')} reportToEdit={reportToEdit} setReportToEdit={setReportToEdit} />
+      <Operario onLogout={handleLogout} user={user} onSwitchView={() => setViewModePersisted('gerencia')} reportToEdit={reportToEdit} setReportToEdit={setReportToEdit} />
       {exitHint}
     </>
   }
 
   if (viewMode === 'gerencia') {
     return <>
-      <Gerencia onLogout={handleLogout} user={user} onSwitchView={() => setViewMode('operario')} onEditReport={(report) => { setReportToEdit(report); setViewMode('operario'); }} />
+      <Gerencia onLogout={handleLogout} user={user} onSwitchView={() => setViewModePersisted('operario')} onEditReport={(report) => { setReportToEdit(report); setViewMode('operario'); }} />
       {exitHint}
     </>
   }

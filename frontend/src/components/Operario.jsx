@@ -716,8 +716,8 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
             </button>
 
             {(user.permisos.dashboard || user.permisos.inventario || user.permisos.config) && (
-              <button className="btn-module" style={{background: '#1e3a8a'}} onClick={onSwitchView}>
-                <span className="emoji">💻</span><span>Panel Administrativo</span>
+              <button className="btn-module" style={{background: '#1e3a8a', border: '2px solid #3b82f6'}} onClick={onSwitchView}>
+                <span className="emoji">📊</span><span>Ver Dashboard y Panel Administrativo</span>
               </button>
             )}
 
