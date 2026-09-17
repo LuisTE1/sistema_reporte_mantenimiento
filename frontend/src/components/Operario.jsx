@@ -90,6 +90,32 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
   const [descripcion, setDescripcion] = useState('')
   const [fotos, setFotos] = useState([])
   const [previewImage, setPreviewImage] = useState(null)
+  const [previewGallery, setPreviewGallery] = useState([])
+  const [previewIndex, setPreviewIndex] = useState(0)
+
+  // Abre el visor de fotos a pantalla completa. Si el reporte tiene varias
+  // evidencias, permite pasar de una a otra sin cerrar y volver a abrir
+  // (como en WhatsApp) en vez de solo mostrar la que se tocó.
+  const openPreview = (gallery, url) => {
+    const idx = Math.max(0, gallery.indexOf(url))
+    setPreviewGallery(gallery)
+    setPreviewIndex(idx)
+    setPreviewImage(url)
+  }
+  const showPrevPreview = (e) => {
+    e.stopPropagation()
+    if (previewGallery.length < 2) return
+    const idx = (previewIndex - 1 + previewGallery.length) % previewGallery.length
+    setPreviewIndex(idx)
+    setPreviewImage(previewGallery[idx])
+  }
+  const showNextPreview = (e) => {
+    e.stopPropagation()
+    if (previewGallery.length < 2) return
+    const idx = (previewIndex + 1) % previewGallery.length
+    setPreviewIndex(idx)
+    setPreviewImage(previewGallery[idx])
+  }
   const [reportes, setReportes] = useState([])
   
   const [editingReportId, setEditingReportId] = useState(null)
@@ -147,6 +173,8 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
   // Visor de Soluciones
   const [visorModulo, setVisorModulo] = useState('grifo')
   const [filtroEstacion, setFiltroEstacion] = useState('Todas')
+  const [filtroTracto, setFiltroTracto] = useState('Todos')
+  const [filtroCarreta, setFiltroCarreta] = useState('Todos')
   const [reporteModal, setReporteModal] = useState(null)
 
   // Botón físico "Atrás": cierra primero lo más "encima" (lightbox > modales > vista de detalle),
@@ -632,7 +660,12 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
 
   if (modulo === 'visor') {
     const reportesDelModulo = reportes.filter(r => visorModulo === 'unidades' ? r.modulo === 'unidades' : r.modulo !== 'unidades')
-    const reportesFiltrados = filtroEstacion === 'Todas' ? reportesDelModulo : reportesDelModulo.filter(r => r.estacion_id === filtroEstacion)
+    const reportesFiltrados = visorModulo === 'unidades'
+      ? reportesDelModulo.filter(r =>
+          (filtroTracto === 'Todos' || r.tracto_placa === filtroTracto) &&
+          (filtroCarreta === 'Todos' || r.carreta_placa === filtroCarreta)
+        )
+      : (filtroEstacion === 'Todas' ? reportesDelModulo : reportesDelModulo.filter(r => r.estacion_id === filtroEstacion))
     const opcionesEstaciones = ['Todas', ...Array.from(new Set(reportesDelModulo.map(r => r.estacion_id)))]
 
     return (
@@ -665,6 +698,25 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
               <select value={filtroEstacion} onChange={e => setFiltroEstacion(e.target.value)} style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}}>
                 {opcionesEstaciones.map(est => <option key={est} value={est}>{est}</option>)}
               </select>
+            </div>
+          )}
+
+          {visorModulo === 'unidades' && (
+            <div style={{marginBottom: '1.5rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap'}}>
+              <div style={{flex: '1 1 140px'}}>
+                <label style={{display: 'block', marginBottom: '0.5rem', color: '#94a3b8', fontSize: '0.9rem'}}>Filtrar por Tracto</label>
+                <select value={filtroTracto} onChange={e => setFiltroTracto(e.target.value)} style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}}>
+                  <option value="Todos">Todos</option>
+                  {unidadesTractos.map(t => <option key={t.id} value={t.placa}>{t.placa}</option>)}
+                </select>
+              </div>
+              <div style={{flex: '1 1 140px'}}>
+                <label style={{display: 'block', marginBottom: '0.5rem', color: '#94a3b8', fontSize: '0.9rem'}}>Filtrar por Carreta</label>
+                <select value={filtroCarreta} onChange={e => setFiltroCarreta(e.target.value)} style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}}>
+                  <option value="Todos">Todas</option>
+                  {unidadesCarretas.map(c => <option key={c.id} value={c.placa}>{c.placa}</option>)}
+                </select>
+              </div>
             </div>
           )}
 
@@ -755,13 +807,17 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
               <div>
                 <small style={{color: '#94a3b8', display: 'block', marginBottom: '0.5rem'}}>Evidencias Fotográficas</small>
                 <div style={{background: '#1e293b', padding: '1rem', borderRadius: '8px', border: '1px dashed #334155', display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
-                  {reporteModal.fotos && reporteModal.fotos !== 'Sin foto' ? reporteModal.fotos.split(',').map((f, i) => (
-                    f.startsWith('http') ?
-                      <div key={i} onClick={() => setPreviewImage(f)} onContextMenu={(e) => e.preventDefault()} style={{cursor: 'pointer'}}>
-                        <img src={f} alt="Evidencia" loading="lazy" draggable={false} style={{height: '100px', borderRadius: '8px', border: '1px solid #475569', objectFit: 'cover', pointerEvents: 'none'}} />
-                      </div>
-                    : <span key={i} style={{color: '#cbd5e1'}}>{f}</span>
-                  )) : <span className="text-muted">No hay evidencias</span>}
+                  {reporteModal.fotos && reporteModal.fotos !== 'Sin foto' ? (() => {
+                    const lista = reporteModal.fotos.split(',')
+                    const galeria = lista.filter(f => f.startsWith('http'))
+                    return lista.map((f, i) => (
+                      f.startsWith('http') ?
+                        <div key={i} onClick={() => openPreview(galeria, f)} onContextMenu={(e) => e.preventDefault()} style={{cursor: 'pointer'}}>
+                          <img src={f} alt="Evidencia" loading="lazy" draggable={false} style={{height: '100px', borderRadius: '8px', border: '1px solid #475569', objectFit: 'cover', pointerEvents: 'none'}} />
+                        </div>
+                      : <span key={i} style={{color: '#cbd5e1'}}>{f}</span>
+                    ))
+                  })() : <span className="text-muted">No hay evidencias</span>}
                 </div>
               </div>
               
@@ -918,7 +974,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
                   <label style={{display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#cbd5e1'}}>Fotos guardadas anteriormente:</label>
                   <div style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
                     {existingFotos.map((url, i) => (
-                      <div key={i} style={{position: 'relative', cursor: 'pointer'}} onClick={() => setPreviewImage(url)} onContextMenu={(e) => e.preventDefault()}>
+                      <div key={i} style={{position: 'relative', cursor: 'pointer'}} onClick={() => openPreview(existingFotos, url)} onContextMenu={(e) => e.preventDefault()}>
                         <img src={url} alt="Evidencia previa" draggable={false} style={{height: '80px', borderRadius: '8px', border: '1px solid #475569', objectFit: 'cover', pointerEvents: 'none'}} />
                         <button type="button" onClick={(e) => { e.stopPropagation(); setExistingFotos(existingFotos.filter((_, index) => index !== i)); }} style={{position: 'absolute', top: '-5px', right: '-5px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.7rem', fontWeight: 'bold'}}>×</button>
                       </div>
@@ -942,7 +998,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
                   <label style={{display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#10b981'}}>Nuevas fotos seleccionadas ({fotos.length}):</label>
                   <div style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
                     {fotos.map((fotoObj, i) => (
-                      <div key={i} style={{position: 'relative', cursor: 'pointer'}} onClick={() => setPreviewImage(fotoObj.preview)} onContextMenu={(e) => e.preventDefault()}>
+                      <div key={i} style={{position: 'relative', cursor: 'pointer'}} onClick={() => openPreview(fotos.map(fo => fo.preview), fotoObj.preview)} onContextMenu={(e) => e.preventDefault()}>
                         <img src={fotoObj.preview} alt="Preview" draggable={false} style={{height: '80px', borderRadius: '8px', border: '1px solid #10b981', objectFit: 'cover', pointerEvents: 'none'}} />
                         <button type="button" onClick={(e) => { e.stopPropagation(); removeFoto(i); }} style={{position: 'absolute', top: '-5px', right: '-5px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.7rem', fontWeight: 'bold'}}>×</button>
                       </div>
@@ -995,7 +1051,16 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
       {/* Lightbox para previsualización a pantalla completa */}
       {previewImage && (
         <div style={{position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.9)', zIndex: 10000, display: 'flex', justifyContent: 'center', alignItems: 'center'}} onClick={() => setPreviewImage(null)}>
-          <button style={{position: 'absolute', top: '20px', right: '20px', background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', fontSize: '2rem', cursor: 'pointer', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center'}} onClick={() => setPreviewImage(null)}>×</button>
+          <button style={{position: 'absolute', top: '20px', right: '20px', background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', fontSize: '2rem', cursor: 'pointer', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1}} onClick={() => setPreviewImage(null)}>×</button>
+          {previewGallery.length > 1 && (
+            <>
+              <div style={{position: 'absolute', top: '20px', left: '50%', transform: 'translateX(-50%)', color: 'white', fontSize: '0.9rem', background: 'rgba(255,255,255,0.15)', padding: '0.25rem 0.75rem', borderRadius: '999px'}}>
+                {previewIndex + 1} / {previewGallery.length}
+              </div>
+              <button onClick={showPrevPreview} style={{position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', fontSize: '1.8rem', cursor: 'pointer', borderRadius: '50%', width: '48px', height: '48px'}}>‹</button>
+              <button onClick={showNextPreview} style={{position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', fontSize: '1.8rem', cursor: 'pointer', borderRadius: '50%', width: '48px', height: '48px'}}>›</button>
+            </>
+          )}
           <img src={previewImage} alt="Fullscreen Preview" draggable={false} onContextMenu={(e) => e.preventDefault()} style={{maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: '8px'}} onClick={(e) => e.stopPropagation()} />
         </div>
       )}
