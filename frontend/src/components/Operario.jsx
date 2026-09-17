@@ -5,43 +5,9 @@ import { addToOfflineQueue, syncOfflineReports } from '../utils/offlineQueue'
 import { Network } from '@capacitor/network'
 import { useBackHandler } from '../utils/backButton'
 import { getCached, setCached, invalidateCache } from '../utils/cache'
-
-const compressImage = (file, maxWidth = 1024, quality = 0.6) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = event => {
-      const img = new Image();
-      img.src = event.target.result;
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-        if (width > height) {
-          if (width > maxWidth) {
-            height = Math.round((height * maxWidth) / width);
-            width = maxWidth;
-          }
-        } else {
-          if (height > maxWidth) {
-            width = Math.round((width * maxWidth) / height);
-            height = maxWidth;
-          }
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, width, height);
-        canvas.toBlob(blob => {
-          if (!blob) return reject(new Error('Canvas toBlob failed'));
-          resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }));
-        }, 'image/jpeg', quality);
-      };
-      img.onerror = error => reject(error);
-    };
-    reader.onerror = error => reject(error);
-  });
-};
+import { compressImage } from '../utils/image'
+import { colorDeEstado } from '../utils/estado'
+import ReporteSeguimiento from './ReporteSeguimiento'
 
 
 export default function Operario({ onLogout, user, onSwitchView, reportToEdit, setReportToEdit }) {
@@ -805,8 +771,11 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
             <div style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
               {reportesFiltrados.map(r => (
                 <div key={r.id} onClick={() => setReporteModal(r)} style={{background: '#1e293b', padding: '1.25rem', borderRadius: '8px', border: '1px solid #334155', cursor: 'pointer', transition: 'transform 0.2s'}} onMouseOver={e => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}>
-                  <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem'}}>
-                    <span style={{fontWeight: 'bold', color: '#3b82f6', fontSize: '1.1rem'}}>{r.motivo}</span>
+                  <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem', flexWrap: 'wrap', gap: '0.5rem'}}>
+                    <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap'}}>
+                      <span style={{fontWeight: 'bold', color: '#3b82f6', fontSize: '1.1rem'}}>{r.motivo}</span>
+                      <span style={{fontSize: '0.7rem', fontWeight: 'bold', color: colorDeEstado(r.estado), background: colorDeEstado(r.estado) + '22', padding: '0.15rem 0.6rem', borderRadius: '999px'}}>{r.estado || 'Pendiente'}</span>
+                    </div>
                     <span style={{fontSize: '0.8rem', color: '#94a3b8'}}>{r.creado_en ? new Date(r.creado_en + (r.creado_en.endsWith('Z') ? '' : 'Z')).toLocaleString() : ''}</span>
                   </div>
                   {r.modulo === 'unidades' || r.estacion_id === 'UNIDADES' ? (
@@ -834,10 +803,13 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
           <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: '1rem'}}>
             <div style={{background: '#0f172a', padding: '2rem', borderRadius: '12px', border: '1px solid #3b82f6', width: '100%', maxWidth: '600px', maxHeight: '90vh', overflowY: 'auto'}}>
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem'}}>
-                <h3 style={{color: '#3b82f6', margin: 0}}>{reporteModal.motivo}</h3>
+                <div style={{display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap'}}>
+                  <h3 style={{color: '#3b82f6', margin: 0}}>{reporteModal.motivo}</h3>
+                  <span style={{fontSize: '0.75rem', fontWeight: 'bold', color: colorDeEstado(reporteModal.estado), background: colorDeEstado(reporteModal.estado) + '22', padding: '0.2rem 0.7rem', borderRadius: '999px'}}>{reporteModal.estado || 'Pendiente'}</span>
+                </div>
                 <button onClick={() => setReporteModal(null)} style={{background: 'transparent', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer', lineHeight: 1}}>×</button>
               </div>
-              
+
               <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem'}}>
                 <div><small style={{color: '#94a3b8', display: 'block'}}>Fecha y Hora</small><strong>{reporteModal.creado_en ? new Date(reporteModal.creado_en + (reporteModal.creado_en.endsWith('Z') ? '' : 'Z')).toLocaleString() : ''}</strong></div>
                 <div><small style={{color: '#94a3b8', display: 'block'}}>Autor (Auditoría)</small><strong style={{color: '#10b981'}}>{reporteModal.creado_por}</strong></div>
@@ -853,13 +825,13 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
                   </>
                 )}
               </div>
-              
+
               <div style={{marginBottom: '1.5rem'}}>
                 <small style={{color: '#94a3b8', display: 'block', marginBottom: '0.5rem'}}>Descripción</small>
                 {(() => {
                   const desc = reporteModal.descripcion || '';
                   const match = desc.match(/\[📦 Repuesto utilizado: (.*?) x(\d+)\]$/);
-                  
+
                   if (match) {
                     const cleanDesc = desc.replace(match[0], '').trim();
                     return (
@@ -874,7 +846,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
                       </>
                     );
                   }
-                  
+
                   return (
                     <div style={{background: '#1e293b', padding: '1rem', borderRadius: '8px', whiteSpace: 'pre-wrap', color: '#e2e8f0'}}>
                       {desc}
@@ -899,9 +871,18 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
                   })() : <span className="text-muted">No hay evidencias</span>}
                 </div>
               </div>
-              
 
-              
+              <ReporteSeguimiento
+                reporte={reporteModal}
+                user={user}
+                showAlert={showAlert}
+                openPreview={openPreview}
+                onEstadoActualizado={(estado, resuelto_en) => {
+                  setReporteModal(prev => prev ? { ...prev, estado, resuelto_en } : prev)
+                  setReportes(prev => prev.map(r => r.id === reporteModal.id ? { ...r, estado, resuelto_en } : r))
+                  invalidateCache('operario_reportes')
+                }}
+              />
             </div>
           </div>
         )}

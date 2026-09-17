@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import { useBackHandler } from '../utils/backButton'
+import { colorDeEstado, diasTranscurridos } from '../utils/estado'
+import ReporteSeguimiento from './ReporteSeguimiento'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -452,7 +454,19 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
         </div>
         <nav>
           {user.permisos.dashboard && <button className={tab === 'dashboard' ? 'active' : ''} onClick={() => { setTab('dashboard'); setIsMobileMenuOpen(false) }}>📊 {!isSidebarCollapsed && 'Dashboard KPI'}</button>}
-          {user.permisos.soluciones && <button className={tab === 'soluciones' ? 'active' : ''} onClick={() => { setTab('soluciones'); setIsMobileMenuOpen(false) }}>📚 {!isSidebarCollapsed && 'Visor de Soluciones'}</button>}
+          {user.permisos.soluciones && (() => {
+            const pendientesCount = reportes.filter(r => (r.estado || 'Pendiente') !== 'Resuelto').length
+            return (
+              <button className={tab === 'soluciones' ? 'active' : ''} onClick={() => { setTab('soluciones'); setIsMobileMenuOpen(false) }} style={{display: 'flex', alignItems: 'center', justifyContent: isSidebarCollapsed ? 'center' : 'space-between'}}>
+                <span>📚 {!isSidebarCollapsed && 'Visor de Soluciones'}</span>
+                {pendientesCount > 0 && (
+                  <span title={`${pendientesCount} reporte(s) sin resolver`} style={{background: '#ef4444', color: 'white', fontSize: '0.7rem', fontWeight: 'bold', borderRadius: '999px', padding: isSidebarCollapsed ? '0' : '0.1rem 0.5rem', minWidth: isSidebarCollapsed ? '0' : '1.4rem', textAlign: 'center'}}>
+                    {isSidebarCollapsed ? '' : pendientesCount}
+                  </span>
+                )}
+              </button>
+            )
+          })()}
           {user.permisos.inventario && <button className={tab === 'inventario' ? 'active' : ''} onClick={() => { setTab('inventario'); setIsMobileMenuOpen(false) }}>📦 {!isSidebarCollapsed && 'Inventario Estaciones'}</button>}
           {user.permisos.config && <button className={tab === 'usuarios' ? 'active' : ''} onClick={() => { setTab('usuarios'); setIsMobileMenuOpen(false) }}>👥 {!isSidebarCollapsed && 'Accesos (ABAC)'}</button>}
           {user.permisos.config && <button className={tab === 'mantenimiento' ? 'active' : ''} onClick={() => { setTab('mantenimiento'); setIsMobileMenuOpen(false) }}>🛠️ {!isSidebarCollapsed && 'Catálogo de Mantenimiento'}</button>}
@@ -1031,7 +1045,30 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
           {tab === 'soluciones' && (
             <div className="table-container">
               <h3 className="mb-4">Visor de Soluciones y Evidencias</h3>
-              
+
+              {(() => {
+                const pendientes = reportes
+                  .filter(r => (r.estado || 'Pendiente') !== 'Resuelto')
+                  .map(r => ({ ...r, dias: diasTranscurridos(r.creado_en, null) }))
+                  .sort((a, b) => b.dias - a.dias)
+                if (pendientes.length === 0) return null
+                return (
+                  <div style={{background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', borderRadius: '8px', padding: '1rem', marginBottom: '1.5rem'}}>
+                    <p style={{color: '#ef4444', fontWeight: 'bold', marginBottom: '0.75rem'}}>⚠️ {pendientes.length} reporte(s) sin resolver — dale prioridad a los más antiguos:</p>
+                    <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
+                      {pendientes.slice(0, 5).map(r => (
+                        <div key={r.id} onClick={() => setReporteModal(r)} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#0f172a', padding: '0.5rem 0.75rem', borderRadius: '6px', cursor: 'pointer', gap: '0.5rem', flexWrap: 'wrap'}}>
+                          <span style={{fontSize: '0.85rem', color: '#e2e8f0'}}><strong>{r.motivo}</strong> · {r.tracto_placa || r.carreta_placa ? `${r.tracto_placa || ''} ${r.carreta_placa || ''}`.trim() : r.estacion_id}</span>
+                          <span style={{fontSize: '0.75rem', fontWeight: 'bold', color: colorDeEstado(r.estado), background: colorDeEstado(r.estado) + '22', padding: '0.15rem 0.6rem', borderRadius: '999px', whiteSpace: 'nowrap'}}>
+                            {r.estado || 'Pendiente'} · {r.dias} día(s)
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
+
               {/* Filtro de Módulo y Estaciones */}
               <div style={{display: 'flex', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem'}}>
                 <button className={visorModulo === 'grifo' ? 'btn-primary' : 'btn-secondary'} onClick={() => setVisorModulo('grifo')} style={{flex: 1}}>
@@ -1092,8 +1129,9 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                   <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem'}}>
                     {reportesVisorFiltrados.map(r => (
                     <div key={r.id} onClick={() => setReporteModal(r)} style={{background: '#0f172a', padding: '1.25rem', borderRadius: '8px', border: '1px solid #3b82f6', cursor: 'pointer', transition: 'transform 0.2s'}} onMouseOver={e => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}>
-                      <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem'}}>
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem', flexWrap: 'wrap', gap: '0.5rem'}}>
                         <span style={{fontWeight: 'bold', color: '#3b82f6', fontSize: '1.1rem'}}>{r.motivo}</span>
+                        <span style={{fontSize: '0.7rem', fontWeight: 'bold', color: colorDeEstado(r.estado), background: colorDeEstado(r.estado) + '22', padding: '0.15rem 0.6rem', borderRadius: '999px'}}>{r.estado || 'Pendiente'}</span>
                       </div>
                       <p style={{fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem'}}>{r.creado_en ? new Date(r.creado_en + (r.creado_en.endsWith('Z') ? '' : 'Z')).toLocaleString() : ''}</p>
                       {r.modulo === 'unidades' || r.estacion_id === 'UNIDADES' ? (
@@ -1122,7 +1160,10 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
             <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: '1rem'}}>
               <div style={{background: '#0f172a', padding: '2rem', borderRadius: '12px', border: '1px solid #3b82f6', width: '100%', maxWidth: '600px', maxHeight: '90vh', overflowY: 'auto'}}>
                 <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem'}}>
-                  <h3 style={{color: '#3b82f6', margin: 0}}>{reporteModal.motivo}</h3>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap'}}>
+                    <h3 style={{color: '#3b82f6', margin: 0}}>{reporteModal.motivo}</h3>
+                    <span style={{fontSize: '0.75rem', fontWeight: 'bold', color: colorDeEstado(reporteModal.estado), background: colorDeEstado(reporteModal.estado) + '22', padding: '0.2rem 0.7rem', borderRadius: '999px'}}>{reporteModal.estado || 'Pendiente'}</span>
+                  </div>
                   <button onClick={() => setReporteModal(null)} style={{background: 'transparent', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer', lineHeight: 1}}>×</button>
                 </div>
                 
@@ -1185,7 +1226,18 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                     })() : <span className="text-muted">No hay evidencias</span>}
                   </div>
                 </div>
-                
+
+                <ReporteSeguimiento
+                  reporte={reporteModal}
+                  user={user}
+                  showAlert={showAlert}
+                  openPreview={openPreview}
+                  onEstadoActualizado={(estado, resuelto_en) => {
+                    setReporteModal(prev => prev ? { ...prev, estado, resuelto_en } : prev)
+                    setReportes(prev => prev.map(r => r.id === reporteModal.id ? { ...r, estado, resuelto_en } : r))
+                  }}
+                />
+
                 {(user.permiso_editar_reportes) && (
                   <div style={{marginTop: '2rem', display: 'flex', gap: '1rem', justifyContent: 'flex-end', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1rem'}}>
                     <button className="btn-secondary" style={{borderColor: '#ef4444', color: '#ef4444'}} onClick={async () => {
