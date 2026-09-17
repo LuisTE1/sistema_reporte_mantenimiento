@@ -11,6 +11,14 @@
 -- Después de ejecutarlo, avísame para actualizar Login.jsx y así
 -- el login use la función segura en vez de leer la contraseña
 -- directamente (ver notas al final del archivo).
+--
+-- Nota: en Supabase, pgcrypto (crypt/gen_salt) vive en el esquema
+-- "extensions", no en "public". Las funciones de abajo ya incluyen
+-- "extensions" en su search_path por eso. Si esto falló antes con el
+-- error "function crypt(...) does not exist", ya está corregido: como
+-- Supabase corre todo el script como una sola transacción, ese error
+-- anterior revirtió todo (no quedó nada a medias) — puedes volver a
+-- pegar el archivo completo sin problema.
 -- ============================================================
 
 -- PARTE 1: Dejar de guardar contraseñas en texto plano
@@ -33,7 +41,7 @@ begin
   end if;
   return new;
 end;
-$$ language plpgsql security definer set search_path = public;
+$$ language plpgsql security definer set search_path = public, extensions;
 
 drop trigger if exists trg_hash_password on usuarios;
 create trigger trg_hash_password
@@ -58,7 +66,7 @@ returns table (
 )
 language sql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
   select u.id, u.nombre, u.rol, u.estaciones, u.permiso_dashboard, u.permiso_soluciones,
          u.permiso_inventario, u.permiso_config, u.permiso_editar_reportes, u.permiso_grifos, u.permiso_unidades
