@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient'
 import { useBackHandler } from '../utils/backButton'
 import { colorDeEstado, diasTranscurridos } from '../utils/estado'
 import ReporteSeguimiento from './ReporteSeguimiento'
+import ZoomableImage from './ZoomableImage'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -102,6 +103,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
   }
   
   const [editingUser, setEditingUser] = useState(null)
+  const [nuevaPasswordEdit, setNuevaPasswordEdit] = useState('')
   const [nuevoUsuario, setNuevoUsuario] = useState({ nombre: '', password: '', rol: 'Operario', estaciones: 'Todas' })
 
   // Estado para Modal de Crear Estación
@@ -305,25 +307,32 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
 
   const handleSaveUserPermissions = async (e) => {
     e.preventDefault()
-    const { error } = await supabase.from('usuarios')
-      .update({
-        rol: editingUser.rol,
-        estaciones: editingUser.estaciones,
-        permiso_config: editingUser.permiso_config,
-        permiso_inventario: editingUser.permiso_inventario,
-        permiso_dashboard: editingUser.permiso_dashboard,
-        permiso_soluciones: editingUser.permiso_soluciones,
-        permiso_editar_reportes: editingUser.permiso_editar_reportes,
-        permiso_grifos: editingUser.permiso_grifos,
-        permiso_unidades: editingUser.permiso_unidades
-      })
-      .eq('id', editingUser.id)
+    const payload = {
+      rol: editingUser.rol,
+      estaciones: editingUser.estaciones,
+      permiso_config: editingUser.permiso_config,
+      permiso_inventario: editingUser.permiso_inventario,
+      permiso_dashboard: editingUser.permiso_dashboard,
+      permiso_soluciones: editingUser.permiso_soluciones,
+      permiso_editar_reportes: editingUser.permiso_editar_reportes,
+      permiso_grifos: editingUser.permiso_grifos,
+      permiso_unidades: editingUser.permiso_unidades
+    }
+    // Solo se toca la contraseña si se escribió una nueva; se guarda en texto
+    // plano acá pero la base de datos la hashea sola con un trigger antes de
+    // guardarla (ver supabase_migration_seguridad.sql), así nunca queda en
+    // texto plano de verdad.
+    if (nuevaPasswordEdit.trim()) {
+      payload.password = nuevaPasswordEdit.trim()
+    }
+    const { error } = await supabase.from('usuarios').update(payload).eq('id', editingUser.id)
 
     if (error) {
       showAlert('Error', 'Error guardando permisos: ' + error.message)
     } else {
-      showAlert('Éxito', `Información actualizada para ${editingUser.nombre}`)
+      showAlert('Éxito', nuevaPasswordEdit.trim() ? `Información y contraseña actualizadas para ${editingUser.nombre}` : `Información actualizada para ${editingUser.nombre}`)
       setEditingUser(null)
+      setNuevaPasswordEdit('')
     }
   }
 
@@ -1343,11 +1352,23 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                         <span style={{color: '#ef4444', fontWeight: 'bold'}}>Permitir Editar/Eliminar Reportes</span>
                       </label>
                     </div>
-                    
-                    <div style={{display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem'}}>
+
+                    <div className="form-group" style={{marginTop: '1rem', maxWidth: '320px'}}>
+                      <label>Restablecer Contraseña (opcional)</label>
+                      <input
+                        type="password"
+                        value={nuevaPasswordEdit}
+                        onChange={e => setNuevaPasswordEdit(e.target.value)}
+                        placeholder="Dejar vacío para no cambiarla"
+                        style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}}
+                      />
+                      <small style={{color: '#64748b', display: 'block', marginTop: '0.3rem'}}>Úsalo si el usuario olvidó su contraseña o quieres cambiarla por seguridad.</small>
+                    </div>
+
+                    <div style={{display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginTop: '1rem'}}>
                       <div style={{display: 'flex', gap: '1rem'}}>
                         <button type="submit" className="btn-primary" style={{width: 'auto'}}>Guardar Cambios</button>
-                        <button type="button" className="btn-secondary" style={{width: 'auto'}} onClick={() => setEditingUser(null)}>Cancelar</button>
+                        <button type="button" className="btn-secondary" style={{width: 'auto'}} onClick={() => { setEditingUser(null); setNuevaPasswordEdit('') }}>Cancelar</button>
                       </div>
                       <button type="button" className="btn-text" style={{color: '#ef4444', border: '1px solid #ef4444', padding: '0.5rem 1rem'}} onClick={() => handleDeleteUser(editingUser.id)}>🗑️ Eliminar Usuario</button>
                     </div>
@@ -1385,7 +1406,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                             <td style={{fontSize: '0.8rem', color: '#94a3b8'}}>
                               {[u.permiso_dashboard && 'Dashboard', u.permiso_inventario && 'Inventario', u.permiso_soluciones && 'Soluciones', u.permiso_config && 'Config'].filter(Boolean).join(', ') || 'Ninguno'}
                             </td>
-                            <td><button className="btn-text" style={{color: '#3b82f6'}} onClick={() => setEditingUser(u)}>Configurar Permisos</button></td>
+                            <td><button className="btn-text" style={{color: '#3b82f6'}} onClick={() => { setEditingUser(u); setNuevaPasswordEdit('') }}>Configurar Permisos</button></td>
                           </tr>
                         ))}
                       </tbody>
@@ -2078,15 +2099,13 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                 Cargando foto...
               </div>
             )}
-            <img
+            <ZoomableImage
               src={previewImage}
               alt="Fullscreen Preview"
-              draggable={false}
               onContextMenu={(e) => e.preventDefault()}
               onLoad={() => setPreviewLoading(false)}
               onError={() => setPreviewLoading(false)}
               style={{maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: '8px', opacity: previewLoading ? 0 : 1, transition: 'opacity 0.15s'}}
-              onClick={(e) => e.stopPropagation()}
             />
           </div>
         )}

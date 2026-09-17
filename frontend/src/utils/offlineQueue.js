@@ -105,7 +105,7 @@ export const syncOfflineReports = async () => {
             const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
             const filePath = `reportes/${fileName}`;
 
-            const { error: uploadError } = await supabase.storage.from('evidencias').upload(filePath, foto);
+            const { error: uploadError } = await supabase.storage.from('evidencias').upload(filePath, foto, { cacheControl: '31536000' });
             if (!uploadError) {
               const { data: urlData } = supabase.storage.from('evidencias').getPublicUrl(filePath);
               publicUrls.push(urlData.publicUrl);

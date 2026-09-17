@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import { compressImage } from '../utils/image'
-import { ESTADOS, colorDeEstado, diasTranscurridos } from '../utils/estado'
+import { colorDeEstado, diasTranscurridos } from '../utils/estado'
 
 /**
  * Historial de seguimiento de un reporte + formulario para actualizar su
@@ -17,14 +17,30 @@ import { ESTADOS, colorDeEstado, diasTranscurridos } from '../utils/estado'
  *  - onEstadoActualizado(nuevoEstado, resueltoEn): notifica al padre para
  *    que actualice su copia local del reporte (lista + modal)
  */
+// Solo se puede avanzar de estado, nunca "retroceder" en una actualización normal:
+// Pendiente -> En Proceso / Resuelto ; En Proceso -> Resuelto.
+// Una vez Resuelto queda bloqueado para todos, excepto quien tenga permiso de
+// editar reportes, que puede "reabrir" el caso (volverlo a Pendiente o En Proceso).
+const SIGUIENTES_ESTADOS = {
+  'Pendiente': ['En Proceso', 'Resuelto'],
+  'En Proceso': ['Resuelto'],
+  'Resuelto': [],
+}
+const ESTADOS_REAPERTURA = ['Pendiente', 'En Proceso']
+
 export default function ReporteSeguimiento({ reporte, user, showAlert, openPreview, onEstadoActualizado }) {
   const [seguimientos, setSeguimientos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
-  const [nuevoEstado, setNuevoEstado] = useState(reporte.estado || 'Pendiente')
+  const [reabriendo, setReabriendo] = useState(false)
+  const [nuevoEstado, setNuevoEstado] = useState(null)
   const [descripcionUpdate, setDescripcionUpdate] = useState('')
   const [fotosUpdate, setFotosUpdate] = useState([])
   const [guardando, setGuardando] = useState(false)
+
+  const puedeEditar = !!user.permiso_editar_reportes
+  const estaResuelto = reporte.estado === 'Resuelto'
+  const opcionesEstado = estaResuelto ? ESTADOS_REAPERTURA : (SIGUIENTES_ESTADOS[reporte.estado || 'Pendiente'] || [])
 
   useEffect(() => {
     let activo = true
@@ -57,6 +73,10 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
   }
 
   const handleGuardar = async () => {
+    if (!nuevoEstado) {
+      showAlert('Atención', 'Selecciona el nuevo estado.')
+      return
+    }
     if (!descripcionUpdate.trim()) {
       showAlert('Atención', 'Describe brevemente qué pasó (ej: "Llegó la batería, se instaló correctamente").')
       return
@@ -68,7 +88,10 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
         const fileExt = fotoObj.file.name.split('.').pop()
         const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`
         const filePath = `seguimiento/${fileName}`
-        const { error: uploadError } = await supabase.storage.from('evidencias').upload(filePath, fotoObj.file)
+        // cacheControl largo: cada foto es un archivo único e inmutable (nunca se
+        // sobreescribe), así que el navegador la puede guardar en caché mucho
+        // tiempo y no se vuelve a descargar cada vez que se abre.
+        const { error: uploadError } = await supabase.storage.from('evidencias').upload(filePath, fotoObj.file, { cacheControl: '31536000' })
         if (uploadError) throw uploadError
         const { data: urlData } = supabase.storage.from('evidencias').getPublicUrl(filePath)
         urls.push(urlData.publicUrl)
@@ -90,7 +113,9 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
       setSeguimientos(prev => [...prev, nuevoRegistro])
       setDescripcionUpdate('')
       setFotosUpdate([])
+      setNuevoEstado(null)
       setMostrarForm(false)
+      setReabriendo(false)
       onEstadoActualizado(nuevoEstado, resueltoEn)
       showAlert('Éxito', 'Se actualizó el estado del reporte.')
     } catch (err) {
@@ -145,14 +170,24 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
       )}
 
       {!mostrarForm ? (
-        <button type="button" className="btn-secondary full-width" onClick={() => { setNuevoEstado(reporte.estado || 'Pendiente'); setMostrarForm(true) }}>
-          🔄 Actualizar Estado
-        </button>
+        estaResuelto ? (
+          puedeEditar ? (
+            <button type="button" className="btn-secondary full-width" style={{borderColor: '#f59e0b', color: '#f59e0b'}} onClick={() => { setNuevoEstado(null); setReabriendo(true); setMostrarForm(true) }}>
+              🔓 Reabrir Reporte
+            </button>
+          ) : (
+            <p className="text-muted" style={{fontSize: '0.85rem', textAlign: 'center'}}>✅ Este reporte ya fue resuelto. Solo un usuario con permiso de editar reportes puede reabrirlo.</p>
+          )
+        ) : (
+          <button type="button" className="btn-secondary full-width" onClick={() => { setNuevoEstado(null); setReabriendo(false); setMostrarForm(true) }}>
+            🔄 Actualizar Estado
+          </button>
+        )
       ) : (
         <div style={{background: '#0f172a', padding: '1rem', borderRadius: '8px', border: '1px solid #334155'}}>
-          <label style={{display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#94a3b8'}}>Nuevo estado</label>
+          <label style={{display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#94a3b8'}}>{reabriendo ? 'Reabrir con estado' : 'Nuevo estado'}</label>
           <div style={{display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap'}}>
-            {ESTADOS.map(e => (
+            {opcionesEstado.map(e => (
               <button
                 key={e}
                 type="button"
@@ -194,7 +229,7 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
             <button type="button" className="btn-primary" style={{flex: 1}} disabled={guardando} onClick={handleGuardar}>
               {guardando ? 'Guardando...' : 'Guardar Actualización'}
             </button>
-            <button type="button" className="btn-secondary" style={{flex: 1}} disabled={guardando} onClick={() => setMostrarForm(false)}>Cancelar</button>
+            <button type="button" className="btn-secondary" style={{flex: 1}} disabled={guardando} onClick={() => { setMostrarForm(false); setReabriendo(false) }}>Cancelar</button>
           </div>
         </div>
       )}

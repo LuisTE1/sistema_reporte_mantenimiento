@@ -1,6 +1,7 @@
 // Comprime una imagen en el navegador antes de subirla a Supabase Storage:
-// reduce el tamaño de fotos de cámara (varios MB) a ~100-300KB, lo cual
-// acelera mucho la subida en datos móviles y el peso del bucket.
+// reduce el tamaño de fotos de cámara (varios MB) a ~50-200KB usando WebP
+// (más liviano que JPEG a la misma calidad visual), lo cual acelera mucho
+// la subida en datos móviles, el peso del bucket, y la carga posterior.
 export const compressImage = (file, maxWidth = 1024, quality = 0.6) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -27,10 +28,11 @@ export const compressImage = (file, maxWidth = 1024, quality = 0.6) => {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
+        const nombreBase = file.name.replace(/\.[^.]+$/, '');
         canvas.toBlob(blob => {
           if (!blob) return reject(new Error('Canvas toBlob failed'));
-          resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() }));
-        }, 'image/jpeg', quality);
+          resolve(new File([blob], `${nombreBase}.webp`, { type: 'image/webp', lastModified: Date.now() }));
+        }, 'image/webp', quality);
       };
       img.onerror = error => reject(error);
     };

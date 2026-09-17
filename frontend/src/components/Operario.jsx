@@ -4,10 +4,11 @@ import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
 import { addToOfflineQueue, syncOfflineReports } from '../utils/offlineQueue'
 import { Network } from '@capacitor/network'
 import { useBackHandler } from '../utils/backButton'
-import { getCached, setCached, invalidateCache } from '../utils/cache'
+import { getCached, setCached, invalidateCache, getCachedStale } from '../utils/cache'
 import { compressImage } from '../utils/image'
-import { colorDeEstado } from '../utils/estado'
+import { ESTADOS, colorDeEstado } from '../utils/estado'
 import ReporteSeguimiento from './ReporteSeguimiento'
+import ZoomableImage from './ZoomableImage'
 
 
 export default function Operario({ onLogout, user, onSwitchView, reportToEdit, setReportToEdit }) {
@@ -55,6 +56,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
     return val || 'General'
   }
   const [descripcion, setDescripcion] = useState('')
+  const [estadoInicial, setEstadoInicial] = useState('Pendiente')
   const [fotos, setFotos] = useState([])
   const [previewImage, setPreviewImage] = useState(null)
   const [previewGallery, setPreviewGallery] = useState([])
@@ -174,15 +176,26 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
       const cacheKey = 'operario_catalogos'
       let catalogos = getCached(cacheKey, 5 * 60 * 1000)
       if (!catalogos) {
-        const [estRes, mtRes, trRes, caRes] = await Promise.all([
-          supabase.from('estaciones').select('*'),
-          supabase.from('mantenimiento_tipos').select('*').order('id'),
-          supabase.from('unidades_tractos').select('*').order('placa'),
-          supabase.from('unidades_carretas').select('*').order('placa'),
-        ])
-        catalogos = { estaciones: estRes.data, mantenimiento: mtRes.data, tractos: trRes.data, carretas: caRes.data }
-        setCached(cacheKey, catalogos)
+        try {
+          const [estRes, mtRes, trRes, caRes] = await Promise.all([
+            supabase.from('estaciones').select('*'),
+            supabase.from('mantenimiento_tipos').select('*').order('id'),
+            supabase.from('unidades_tractos').select('*').order('placa'),
+            supabase.from('unidades_carretas').select('*').order('placa'),
+          ])
+          if (estRes.data && mtRes.data && trRes.data && caRes.data) {
+            catalogos = { estaciones: estRes.data, mantenimiento: mtRes.data, tractos: trRes.data, carretas: caRes.data }
+            setCached(cacheKey, catalogos)
+          }
+        } catch (err) {
+          console.error('No se pudo conectar para cargar catálogos:', err)
+        }
+        // Sin internet (o Supabase no respondió): usamos la última copia
+        // guardada en el celular, aunque esté vieja, para no dejar el
+        // formulario vacío. Se refresca sola en cuanto vuelva la señal.
+        if (!catalogos) catalogos = getCachedStale(cacheKey)
       }
+      if (!catalogos) return
       if (catalogos.estaciones) {
         const permitidas = user.estaciones === 'Todas' ? catalogos.estaciones : catalogos.estaciones.filter(e => user.estaciones.includes(e.nombre))
         setEstaciones(permitidas)
@@ -200,9 +213,14 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
         const cacheKey = 'operario_reportes'
         let data = getCached(cacheKey, 60 * 1000)
         if (!data) {
-          const res = await supabase.from('reportes').select('*').order('creado_en', { ascending: false })
-          data = res.data
-          if (data) setCached(cacheKey, data)
+          try {
+            const res = await supabase.from('reportes').select('*').order('creado_en', { ascending: false })
+            data = res.data
+            if (data) setCached(cacheKey, data)
+          } catch (err) {
+            console.error('No se pudo conectar para cargar reportes:', err)
+          }
+          if (!data) data = getCachedStale(cacheKey)
         }
         if (data) {
           if (user.estaciones !== 'Todas') {
@@ -458,6 +476,8 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
         motivo,
         descripcion: descOffline,
         creado_por: user.nombre,
+        estado: estadoInicial,
+        resuelto_en: estadoInicial === 'Resuelto' ? new Date().toISOString() : null,
         // Si ya se alcanzaron a subir fotos, se guardan sus URLs reales para
         // no volver a subirlas cuando se sincronice la cola offline.
         fotos: uploadedFotos.length > 0 ? uploadedFotos.join(',') : 'Pendiente offline'
@@ -491,7 +511,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
         const filePath = `reportes/${fileName}`
 
         const { error: uploadError } = await withTimeout(
-          supabase.storage.from('evidencias').upload(filePath, fotoObj.file),
+          supabase.storage.from('evidencias').upload(filePath, fotoObj.file, { cacheControl: '31536000' }),
           12000
         )
         if (uploadError) throw uploadError
@@ -531,7 +551,9 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
           carreta_placa: modulo === 'unidades' ? (carretaSeleccionada || null) : null,
           producto: modulo === 'unidades' ? 'N/A' : (productoAfectado || 'General'),
           motivo, descripcion: descFinal, fotos: fotosNombres,
-          creado_por: user.nombre, creado_en: new Date(fechaSuceso).toISOString()
+          creado_por: user.nombre, creado_en: new Date(fechaSuceso).toISOString(),
+          estado: estadoInicial,
+          resuelto_en: estadoInicial === 'Resuelto' ? new Date().toISOString() : null
         }]), 12000)
         finalError = error
         
@@ -550,6 +572,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
         setFotos([])
         setDescripcion('')
         setMotivo('')
+        setEstadoInicial('Pendiente')
         setRepuestoUsado('Ninguno')
         setCantidadUsada(1)
         setLadoSeleccionado('')
@@ -573,6 +596,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
     setEditingReportId(null)
     setOldRepuestoText(null)
     setDescripcion('')
+    setEstadoInicial('Pendiente')
     setFotos([])
     setExistingFotos([])
     setFechaSuceso(formatDateTimeLocal(new Date()))
@@ -629,15 +653,13 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
           Cargando foto...
         </div>
       )}
-      <img
+      <ZoomableImage
         src={previewImage}
         alt="Fullscreen Preview"
-        draggable={false}
         onContextMenu={(e) => e.preventDefault()}
         onLoad={() => setPreviewLoading(false)}
         onError={() => setPreviewLoading(false)}
         style={{maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: '8px', opacity: previewLoading ? 0 : 1, transition: 'opacity 0.15s'}}
-        onClick={(e) => e.stopPropagation()}
       />
     </div>
   )
@@ -1050,6 +1072,29 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
             <label>Descripción / Observaciones</label>
             <textarea placeholder="Detalla qué repuestos usaste o si notaste algo inusual..." value={descripcion} onChange={e => setDescripcion(e.target.value)} required></textarea>
           </div>
+
+          {!editingReportId && (
+            <div className="form-group">
+              <label>Estado del Reporte</label>
+              <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap'}}>
+                {ESTADOS.map(e => (
+                  <button
+                    key={e}
+                    type="button"
+                    onClick={() => setEstadoInicial(e)}
+                    style={{
+                      flex: '1 1 100px', padding: '0.6rem', borderRadius: '6px', cursor: 'pointer',
+                      border: `1px solid ${colorDeEstado(e)}`,
+                      background: estadoInicial === e ? colorDeEstado(e) : 'transparent',
+                      color: estadoInicial === e ? '#0f172a' : colorDeEstado(e),
+                      fontWeight: 'bold', fontSize: '0.85rem'
+                    }}
+                  >{e}</button>
+                ))}
+              </div>
+              <small style={{color: '#64748b', display: 'block', marginTop: '0.4rem'}}>Si ya lo resolviste en el momento, márcalo directamente como Resuelto.</small>
+            </div>
+          )}
 
           <div className="form-actions" style={{display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '2rem'}}>
             <button type="submit" className="btn-primary full-width" style={{padding: '1rem', fontSize: '1.1rem'}} disabled={isSubmitting}>
