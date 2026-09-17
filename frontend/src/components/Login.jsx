@@ -12,22 +12,18 @@ export default function Login({ onLogin }) {
     setLoading(true)
     
     try {
-      const { data: users, error } = await supabase
-        .from('usuarios')
-        .select('*')
-        .eq('nombre', username.toUpperCase())
-      
+      // La verificación de contraseña ocurre DENTRO de Supabase (función
+      // login_usuario, con el hash bcrypt): el navegador nunca ve ni
+      // envía la contraseña guardada, solo recibe el usuario si coincide.
+      const { data: users, error } = await supabase.rpc('login_usuario', {
+        p_nombre: username.toUpperCase(),
+        p_password: password
+      })
+
       if (error) throw error
-      
-      if (users.length > 0) {
+
+      if (users && users.length > 0) {
         const foundUser = users[0]
-        
-        // VERIFICACIÓN REAL DE CONTRASEÑA
-        if (foundUser.password !== password) {
-          alert('Contraseña incorrecta.')
-          setLoading(false)
-          return
-        }
 
         const userData = {
           ...foundUser,
