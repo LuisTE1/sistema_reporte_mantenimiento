@@ -1,0 +1,39 @@
+const fs = require('fs');
+
+let content = fs.readFileSync('src/components/Operario.jsx', 'utf8');
+
+// The file is missing everything from line 38 "img.onerror = error => reject(error);"
+// to "export default function Operario..." which includes:
+// - closing of compressImage function
+// - export default Operario start
+// - useState declarations for modulo, isSyncingBtn, estaciones, islasLados, unidadesTractos
+
+const broken = `      img.onerror = error => reject(error);\n  const [unidadesCarretas, setUnidadesCarretas] = useState([])`;
+
+const fixed = `      img.onerror = error => reject(error);
+    };
+    reader.onerror = error => reject(error);
+  });
+};
+
+
+export default function Operario({ onLogout, user, onSwitchView, reportToEdit, setReportToEdit }) {
+  const [modulo, setModulo] = useState(null)
+  const [isSyncingBtn, setIsSyncingBtn] = useState(false)
+  
+  // Datos Reales de Supabase
+  const [estaciones, setEstaciones] = useState([])
+  const [islasLados, setIslasLados] = useState([])
+  const [unidadesTractos, setUnidadesTractos] = useState([])
+  const [unidadesCarretas, setUnidadesCarretas] = useState([])`;
+
+if (content.includes(broken)) {
+  content = content.replace(broken, fixed);
+  fs.writeFileSync('src/components/Operario.jsx', content);
+  console.log('SUCCESS');
+} else {
+  const idx = content.indexOf('img.onerror = error => reject(error);');
+  const idx2 = content.indexOf('const [unidadesCarretas');
+  console.log('Could not find. idx1=', idx, 'idx2=', idx2);
+  console.log(JSON.stringify(content.substring(idx, idx + 100)));
+}

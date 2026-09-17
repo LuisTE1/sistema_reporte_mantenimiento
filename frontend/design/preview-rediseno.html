@@ -1,0 +1,878 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Control Operativo — Rediseño</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   CONTROL OPERATIVO — PROPUESTA DE REDISEÑO
+   Mundo visual único (dark), sin toggle de tema — panel de
+   control industrial para operación de grifos y flota.
+   ============================================================ */
+
+:root{
+  --ink:#0D1016;
+  --ink-2:#0A0C10;
+  --surface:#171B23;
+  --surface-2:#1F2530;
+  --surface-3:#262E3B;
+  --line:rgba(255,255,255,.09);
+  --line-strong:rgba(255,255,255,.16);
+
+  --accent:#FF6A2E;
+  --accent-dim:rgba(255,106,46,.14);
+  --accent-2:#37D6C4;
+  --accent-2-dim:rgba(55,214,196,.14);
+
+  --ok:#3ECF8E;
+  --ok-dim:rgba(62,207,142,.14);
+  --warn:#F5B93D;
+  --warn-dim:rgba(245,185,61,.14);
+  --danger:#FF5D5D;
+  --danger-dim:rgba(255,93,93,.14);
+
+  --text:#F2F4F8;
+  --text-muted:#8B94A6;
+  --text-faint:#5B6474;
+
+  --font-display:'Barlow Condensed', 'Arial Narrow', sans-serif;
+  --font-body:'Manrope', system-ui, sans-serif;
+  --font-mono:'JetBrains Mono', ui-monospace, monospace;
+
+  --radius-sm:8px;
+  --radius-md:12px;
+  --radius-lg:18px;
+  color-scheme: dark;
+}
+
+*{ margin:0; padding:0; box-sizing:border-box; }
+html{ -webkit-text-size-adjust:100%; }
+body{
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+::selection{ background: var(--accent); color:#1a0a02; }
+
+img,svg{ display:block; max-width:100%; }
+button{ font-family: inherit; }
+
+h1,h2,h3,h4{ font-family: var(--font-display); font-weight:700; text-wrap: balance; letter-spacing:.2px; }
+
+.mono{ font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.icon{ width:18px; height:18px; stroke:currentColor; stroke-width:1.7; fill:none; stroke-linecap:round; stroke-linejoin:round; flex-shrink:0; }
+
+/* subtle industrial grid backdrop */
+.blueprint{
+  position:fixed; inset:0; z-index:-1; pointer-events:none;
+  background-image:
+    linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+  background-size: 42px 42px;
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 20%, transparent 75%);
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 20%, transparent 75%);
+}
+
+/* ---------- shell / rhythm ---------- */
+.page{ max-width:1180px; margin:0 auto; padding: 0 24px 96px; }
+
+.top-strip{
+  display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap;
+  gap:.75rem 1rem; padding: 22px 24px; border-bottom:1px solid var(--line);
+  max-width:1180px; margin:0 auto;
+}
+.brand{ display:flex; align-items:center; gap:.6rem; }
+.brand-mark{
+  width:34px; height:34px; border-radius:8px;
+  background: linear-gradient(155deg, var(--accent), #c9481a);
+  display:flex; align-items:center; justify-content:center;
+  box-shadow: 0 4px 14px rgba(255,106,46,.25);
+}
+.brand-mark svg{ width:19px; height:19px; stroke:#0D1016; stroke-width:2.2; }
+.brand-name{ font-family:var(--font-display); font-size:1.15rem; font-weight:700; letter-spacing:.3px; line-height:1; }
+.brand-tag{ font-size:.68rem; color:var(--text-faint); letter-spacing:.08em; text-transform:uppercase; margin-top:2px; }
+
+.status-chip{
+  display:inline-flex; align-items:center; gap:.5rem;
+  background: var(--surface); border:1px solid var(--line);
+  padding:.5rem .9rem; border-radius:99px; font-size:.78rem; color:var(--text-muted);
+}
+.status-dot{ width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
+
+/* ---------- intro / pitch ---------- */
+.intro{ padding: 48px 0 40px; }
+.eyebrow{
+  display:inline-flex; align-items:center; gap:.5rem;
+  font-family:var(--font-mono); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase;
+  color: var(--accent-2); background: var(--accent-2-dim); border:1px solid rgba(55,214,196,.3);
+  padding:.4rem .75rem; border-radius:99px; margin-bottom:1.1rem;
+}
+.intro h1{ font-size: clamp(2.1rem, 5vw, 3.4rem); line-height:1.02; max-width:16ch; }
+.intro h1 em{ font-style:normal; color: var(--accent); }
+.intro p{ color: var(--text-muted); font-size:1.02rem; max-width:56ch; margin-top:1rem; line-height:1.6; }
+
+.specimen{
+  margin-top: 2.75rem; display:grid; grid-template-columns: 1.1fr 1fr; gap:1.25rem;
+}
+.specimen-card{
+  background: var(--surface); border:1px solid var(--line); border-radius: var(--radius-lg);
+  padding: 1.5rem;
+}
+.specimen-card h4{
+  font-family:var(--font-mono); font-weight:600; font-size:.7rem; letter-spacing:.1em; text-transform:uppercase;
+  color: var(--text-faint); margin-bottom:1.1rem;
+}
+.swatches{ display:flex; gap:.6rem; flex-wrap:wrap; }
+.swatch{ flex:1 1 78px; min-width:78px; }
+.swatch-fill{ height:52px; border-radius:8px; border:1px solid var(--line-strong); }
+.swatch span{ display:block; font-family:var(--font-mono); font-size:.68rem; color:var(--text-muted); margin-top:.4rem; }
+.type-row{ display:flex; align-items:baseline; gap:.9rem; padding: .55rem 0; border-bottom:1px dashed var(--line); }
+.type-row:last-child{ border-bottom:none; }
+.type-row .sample{ font-size:1.5rem; line-height:1; }
+.type-row .meta{ font-family:var(--font-mono); font-size:.68rem; color:var(--text-faint); text-transform:uppercase; letter-spacing:.06em; }
+.type-row.display .sample{ font-family:var(--font-display); font-weight:700; }
+.type-row.body .sample{ font-family:var(--font-body); font-weight:600; font-size:1.15rem; }
+.type-row.data .sample{ font-family:var(--font-mono); font-weight:600; font-size:1.05rem; color:var(--accent-2); }
+
+/* ---------- section headers ---------- */
+.section{ margin-top: 4.5rem; }
+.section-head{ display:flex; align-items:flex-end; justify-content:space-between; gap:1rem; margin-bottom:1.75rem; flex-wrap:wrap; }
+.section-head .kicker{ font-family:var(--font-mono); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; color:var(--text-faint); margin-bottom:.35rem; }
+.section-head h2{ font-size:1.9rem; }
+.section-head p{ color:var(--text-muted); font-size:.92rem; max-width:42ch; }
+
+/* ============================================================
+   PHONE FRAME (Ingreso / Operario — pantallas móviles reales)
+   ============================================================ */
+.phones-row{ display:flex; gap:2.5rem; flex-wrap:wrap; align-items:flex-start; justify-content:center; }
+
+.phone{
+  width: min(340px, 92vw);
+  background: #05070a;
+  border-radius: 34px;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 30px 60px -20px rgba(0,0,0,.7);
+}
+.phone-screen{
+  background: var(--surface);
+  border-radius: 24px;
+  overflow: hidden;
+  min-height: 620px;
+  display:flex; flex-direction:column;
+  position:relative;
+}
+.phone-notch{
+  position:absolute; top:0; left:50%; transform:translateX(-50%);
+  width:120px; height:22px; background:#05070a; border-radius:0 0 14px 14px; z-index:5;
+}
+
+/* --- Login screen --- */
+.scr-login{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 2.4rem 1.6rem; gap:0; }
+.scr-login .mark{
+  width:56px; height:56px; border-radius:16px; margin-bottom:1.4rem;
+  background: linear-gradient(155deg, var(--accent), #c9481a);
+  display:flex; align-items:center; justify-content:center;
+  box-shadow: 0 10px 26px rgba(255,106,46,.3);
+}
+.scr-login .mark svg{ width:28px; height:28px; stroke:#0D1016; stroke-width:2; }
+.scr-login h3{ font-size:1.55rem; text-align:center; }
+.scr-login .sub{ color:var(--text-muted); font-size:.85rem; margin-top:.35rem; text-align:center; }
+
+.field{ width:100%; margin-top:1.5rem; }
+.field label{
+  display:block; font-family:var(--font-mono); font-size:.68rem; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--text-faint); margin-bottom:.5rem;
+}
+.field .input{
+  background: var(--ink); border:1px solid var(--line); border-radius: var(--radius-sm);
+  padding: .8rem .9rem; font-size:.95rem; color:var(--text); display:flex; align-items:center; justify-content:space-between;
+}
+.field .input.ph{ color: var(--text-faint); }
+.check-row{ display:flex; align-items:center; gap:.55rem; margin-top:1.2rem; }
+.check-box{ width:18px; height:18px; border-radius:5px; border:1.5px solid var(--accent); background:var(--accent-dim); display:flex; align-items:center; justify-content:center; }
+.check-box svg{ width:12px; height:12px; stroke:var(--accent); stroke-width:3; }
+.check-row span{ font-size:.82rem; color:var(--text-muted); }
+
+.btn{
+  border:none; border-radius: var(--radius-sm); font-weight:700; font-size:.92rem; cursor:pointer;
+  display:inline-flex; align-items:center; justify-content:center; gap:.5rem;
+  transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
+}
+.btn:active{ transform: scale(.97); }
+.btn-primary{
+  background: linear-gradient(135deg, var(--accent), #e0551f); color:#160801;
+  padding: .9rem 1.2rem; width:100%; box-shadow: 0 10px 24px -8px rgba(255,106,46,.55);
+}
+.btn-primary:hover{ box-shadow: 0 12px 28px -6px rgba(255,106,46,.7); }
+.btn-ghost{
+  background: transparent; border:1px solid var(--line-strong); color:var(--text);
+  padding:.65rem 1rem;
+}
+.btn-ghost:hover{ border-color: var(--accent-2); color: var(--accent-2); }
+
+.scr-login .foot{ margin-top:2.2rem; font-size:.72rem; color:var(--text-faint); text-align:center; }
+
+/* --- Operario report screen --- */
+.scr-app{ flex:1; display:flex; flex-direction:column; }
+.scr-topbar{
+  display:flex; align-items:center; justify-content:space-between; gap:.75rem;
+  padding: 1.5rem 1.1rem .95rem; border-bottom:1px solid var(--line);
+}
+.scr-topbar h4{ font-size:1.05rem; }
+.scr-topbar .sub{ font-size:.72rem; color:var(--text-faint); margin-top:2px; }
+.avatar{
+  width:34px; height:34px; border-radius:50%; background:linear-gradient(135deg,var(--accent-2),#1c9384);
+  display:flex; align-items:center; justify-content:center; font-family:var(--font-display); font-weight:700; color:#04211d; font-size:.85rem;
+}
+
+.scr-body{ flex:1; padding: 1.15rem 1.1rem 1.4rem; overflow:hidden; display:flex; flex-direction:column; gap:1.1rem; }
+
+.mini-field label{ font-family:var(--font-mono); font-size:.64rem; letter-spacing:.08em; text-transform:uppercase; color:var(--text-faint); margin-bottom:.4rem; display:block; }
+.mini-select{
+  background: var(--ink); border:1px solid var(--line); border-radius:10px; padding:.72rem .8rem;
+  display:flex; align-items:center; justify-content:space-between; font-size:.86rem;
+}
+.mini-select .icon{ width:15px; height:15px; color:var(--text-faint); }
+.row-2{ display:grid; grid-template-columns:1fr 1fr; gap:.7rem; }
+
+.motivo-pill{
+  display:inline-flex; align-items:center; gap:.4rem; background: var(--danger-dim); color:var(--danger);
+  border:1px solid rgba(255,93,93,.35); padding:.55rem .8rem; border-radius:99px; font-size:.8rem; font-weight:700;
+  width:fit-content;
+}
+.motivo-pill .dot{ width:6px; height:6px; border-radius:50%; background:var(--danger); }
+
+.desc-box{
+  background: var(--ink); border:1px solid var(--line); border-radius:10px; padding:.8rem;
+  font-size:.8rem; color:var(--text-muted); line-height:1.55; min-height:64px;
+}
+
+.photo-row{ display:grid; grid-template-columns:repeat(4,1fr); gap:.5rem; }
+.photo-slot{
+  aspect-ratio:1; border-radius:10px; border:1.5px dashed var(--line-strong);
+  display:flex; align-items:center; justify-content:center; color:var(--text-faint);
+  background: var(--ink);
+}
+.photo-slot.filled{
+  border-style:solid; border-color: var(--accent-2); background: linear-gradient(155deg,#0e2320,#123a34);
+  color: var(--accent-2);
+}
+.photo-slot .icon{ width:16px; height:16px; }
+
+.scr-bottom-nav{
+  display:flex; border-top:1px solid var(--line); background: rgba(23,27,35,.9); backdrop-filter: blur(8px);
+  padding: .55rem .5rem calc(.55rem + 6px);
+}
+.nav-item{
+  flex:1; display:flex; flex-direction:column; align-items:center; gap:.3rem; padding:.4rem 0;
+  color: var(--text-faint); font-size:.62rem; font-weight:600; border-radius:10px;
+}
+.nav-item.active{ color: var(--accent); }
+.nav-item .icon{ width:19px; height:19px; }
+
+/* ============================================================
+   GERENCIA DASHBOARD — panel real y responsivo (no es imagen)
+   ============================================================ */
+.browser-chrome{
+  border:1px solid var(--line); border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--ink-2); padding: .7rem 1rem; display:flex; align-items:center; gap:.6rem;
+}
+.chrome-dots{ display:flex; gap:6px; }
+.chrome-dots span{ width:9px; height:9px; border-radius:50%; background: var(--surface-3); }
+.chrome-url{
+  flex:1; background: var(--surface); border-radius:7px; padding:.4rem .8rem; font-family:var(--font-mono);
+  font-size:.72rem; color:var(--text-faint); text-align:center; margin-left: 1rem;
+}
+
+.app-shell{
+  display:flex; border:1px solid var(--line); border-top:none; border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  overflow:hidden; min-height: 640px; position:relative; background: var(--ink);
+}
+
+.dash-sidebar{
+  width: 236px; flex-shrink:0; background: var(--surface); border-right:1px solid var(--line);
+  display:flex; flex-direction:column; padding: 1.3rem 1rem; gap: 1.6rem;
+  transition: transform .28s ease;
+}
+.sb-brand{ display:flex; align-items:center; gap:.55rem; padding: 0 .3rem; }
+.sb-brand .brand-mark{ width:30px; height:30px; }
+.sb-brand .brand-mark svg{ width:16px; height:16px; }
+.sb-brand-text{ font-family:var(--font-display); font-weight:700; font-size:1rem; line-height:1.1; }
+.sb-brand-text small{ display:block; font-family:var(--font-mono); font-size:.6rem; color:var(--text-faint); font-weight:500; letter-spacing:.06em; }
+
+.sb-nav{ display:flex; flex-direction:column; gap:.2rem; flex:1; }
+.sb-nav .grp-label{ font-family:var(--font-mono); font-size:.62rem; letter-spacing:.1em; text-transform:uppercase; color:var(--text-faint); padding:.9rem .7rem .35rem; }
+.sb-link{
+  display:flex; align-items:center; gap:.75rem; padding:.62rem .7rem; border-radius:9px;
+  color: var(--text-muted); font-size:.87rem; font-weight:600; cursor:pointer; border:1px solid transparent;
+  background:none; width:100%; text-align:left;
+}
+.sb-link .icon{ width:17px; height:17px; }
+.sb-link:hover{ background: var(--surface-2); color: var(--text); }
+.sb-link.active{ background: var(--accent-dim); color: var(--accent); border-color: rgba(255,106,46,.28); }
+.sb-link .count{
+  margin-left:auto; font-family:var(--font-mono); font-size:.68rem; background: var(--surface-3); color:var(--text-muted);
+  padding:.1rem .4rem; border-radius:6px;
+}
+
+.sb-foot{ border-top:1px solid var(--line); padding-top:1rem; display:flex; align-items:center; gap:.6rem; }
+.sb-foot .avatar{ width:32px; height:32px; font-size:.75rem; }
+.sb-foot .who{ line-height:1.2; }
+.sb-foot .who b{ font-size:.82rem; display:block; }
+.sb-foot .who span{ font-size:.68rem; color:var(--text-faint); }
+
+.dash-main{ flex:1; min-width:0; display:flex; flex-direction:column; background: var(--ink); }
+.dash-topbar{
+  display:flex; align-items:center; gap:1rem; padding: 1.1rem 1.5rem; border-bottom:1px solid var(--line);
+  position:sticky; top:0; background: rgba(13,16,22,.85); backdrop-filter: blur(10px); z-index:3;
+}
+.menu-toggle{ display:none; background:none; border:1px solid var(--line); border-radius:8px; padding:.5rem; color:var(--text); cursor:pointer; }
+.dash-topbar h3{ font-size:1.3rem; }
+.dash-topbar .kicker{ font-family:var(--font-mono); font-size:.66rem; color:var(--text-faint); letter-spacing:.08em; text-transform:uppercase; }
+.filters{ display:flex; gap:.55rem; margin-left:auto; flex-wrap:wrap; }
+.filter-chip{
+  display:flex; align-items:center; gap:.4rem; background: var(--surface); border:1px solid var(--line);
+  padding:.5rem .8rem; border-radius:9px; font-size:.78rem; color:var(--text-muted); cursor:pointer;
+}
+.filter-chip .icon{ width:14px; height:14px; }
+.filter-chip:hover{ border-color: var(--line-strong); color:var(--text); }
+
+.dash-content{ padding: 1.6rem; display:flex; flex-direction:column; gap:1.4rem; }
+
+.metrics-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:1rem; }
+.metric{
+  background: var(--surface); border:1px solid var(--line); border-radius: var(--radius-md);
+  padding: 1.1rem 1.2rem; display:flex; flex-direction:column; gap:.6rem;
+}
+.metric-top{ display:flex; align-items:center; justify-content:space-between; }
+.metric-icon{ width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; }
+.metric-icon .icon{ width:16px; height:16px; }
+.metric-label{ font-size:.76rem; color:var(--text-muted); font-weight:600; }
+.metric-value{ font-family:var(--font-mono); font-size:1.9rem; font-weight:700; letter-spacing:-.02em; }
+.metric-delta{ font-size:.72rem; font-weight:600; display:flex; align-items:center; gap:.3rem; width:fit-content; padding:.15rem .5rem; border-radius:6px; }
+.metric-delta.up{ color: var(--ok); background: var(--ok-dim); }
+.metric-delta.flat{ color: var(--text-faint); background: var(--surface-2); }
+.metric-delta.warn{ color: var(--warn); background: var(--warn-dim); }
+
+.charts-row{ display:grid; grid-template-columns: 1.35fr 1fr; gap:1.2rem; align-items:stretch; }
+.panel{ background: var(--surface); border:1px solid var(--line); border-radius: var(--radius-md); padding:1.3rem; }
+.panel-head{ display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:1.3rem; }
+.panel-head h4{ font-size:1rem; font-weight:700; font-family:var(--font-body); }
+.panel-head .cap{ font-size:.72rem; color:var(--text-faint); margin-top:2px; }
+
+/* horizontal bar chart */
+.bar-list{ display:flex; flex-direction:column; gap: .95rem; }
+.bar-row{ display:grid; grid-template-columns: 128px 1fr 34px; align-items:center; gap:.7rem; }
+.bar-row .name{ font-size:.78rem; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.bar-track{ height:9px; background: var(--surface-3); border-radius:99px; overflow:hidden; }
+.bar-fill{ height:100%; border-radius:99px; background: linear-gradient(90deg, var(--accent), #ffab7a); }
+.bar-fill.alt{ background: linear-gradient(90deg, var(--accent-2), #8ff0e4); }
+.bar-row .num{ font-family:var(--font-mono); font-size:.78rem; text-align:right; color:var(--text); }
+
+/* donut */
+.donut-wrap{ display:flex; align-items:center; gap:1.3rem; }
+.donut{ width:128px; height:128px; border-radius:50%; flex-shrink:0;
+  background: conic-gradient(var(--accent) 0 34%, var(--accent-2) 34% 56%, var(--ok) 56% 82%, var(--warn) 82% 100%);
+  position:relative;
+}
+.donut::after{
+  content:''; position:absolute; inset:18px; border-radius:50%; background: var(--surface);
+}
+.donut-legend{ display:flex; flex-direction:column; gap:.55rem; }
+.leg-item{ display:flex; align-items:center; gap:.55rem; font-size:.78rem; color:var(--text-muted); }
+.leg-dot{ width:9px; height:9px; border-radius:2px; flex-shrink:0; }
+.leg-item b{ color:var(--text); font-family:var(--font-mono); margin-left:auto; padding-left:.6rem; }
+
+.table-panel{ background: var(--surface); border:1px solid var(--line); border-radius: var(--radius-md); overflow:hidden; }
+.table-panel .panel-head{ padding: 1.3rem 1.3rem 0; margin-bottom:1rem; }
+.table-scroll{ overflow-x:auto; }
+table{ width:100%; border-collapse:collapse; min-width: 720px; }
+thead th{
+  text-align:left; font-family:var(--font-mono); font-size:.66rem; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--text-faint); padding: .7rem 1.3rem; border-bottom:1px solid var(--line); font-weight:600;
+}
+tbody td{ padding: .85rem 1.3rem; border-bottom:1px solid var(--line); font-size:.83rem; color:var(--text-muted); }
+tbody tr:last-child td{ border-bottom:none; }
+tbody tr:hover td{ background: var(--surface-2); color:var(--text); }
+td.station{ color:var(--text); font-weight:600; }
+td.date{ font-family:var(--font-mono); font-size:.76rem; white-space:nowrap; }
+.badge{
+  display:inline-flex; align-items:center; gap:.4rem; font-size:.72rem; font-weight:700;
+  padding:.3rem .65rem; border-radius:99px;
+}
+.badge .dot{ width:6px; height:6px; border-radius:50%; }
+.badge.ok{ background: var(--ok-dim); color: var(--ok); }
+.badge.ok .dot{ background: var(--ok); }
+.badge.warn{ background: var(--warn-dim); color: var(--warn); }
+.badge.warn .dot{ background: var(--warn); }
+.badge.danger{ background: var(--danger-dim); color: var(--danger); }
+.badge.danger .dot{ background: var(--danger); }
+
+.mobile-overlay{
+  display:none; position:absolute; inset:0; background:rgba(0,0,0,.55); z-index:4;
+}
+
+/* ---------- closing ---------- */
+.closing{
+  margin-top:5rem; background: var(--surface); border:1px solid var(--line); border-radius: var(--radius-lg);
+  padding: 2.2rem; display:flex; gap:2rem; justify-content:space-between; align-items:center; flex-wrap:wrap;
+}
+.closing h3{ font-size:1.5rem; max-width:26ch; }
+.closing p{ color:var(--text-muted); font-size:.9rem; margin-top:.5rem; max-width:44ch; }
+.closing .actions{ display:flex; gap:.7rem; flex-wrap:wrap; }
+
+footer.note{ text-align:center; color:var(--text-faint); font-size:.75rem; margin-top:2.5rem; }
+
+/* ---------- responsive ---------- */
+@media (max-width: 980px){
+  .specimen{ grid-template-columns:1fr; }
+  .charts-row{ grid-template-columns:1fr; }
+  .metrics-grid{ grid-template-columns:repeat(2,1fr); }
+}
+
+@media (max-width: 860px){
+  .dash-sidebar{
+    position:absolute; top:0; left:0; height:100%; z-index:5; transform: translateX(-100%);
+    box-shadow: 20px 0 40px rgba(0,0,0,.4);
+  }
+  .app-shell.menu-open .dash-sidebar{ transform:none; }
+  .app-shell.menu-open .mobile-overlay{ display:block; }
+  .menu-toggle{ display:flex; align-items:center; justify-content:center; }
+  .dash-topbar{ padding: 1rem; }
+  .filters{ display:none; }
+}
+
+@media (max-width: 620px){
+  .top-strip{ padding: 18px; }
+  .page{ padding: 0 16px 72px; }
+  .intro{ padding-top:36px; }
+  .metrics-grid{ grid-template-columns:1fr; }
+  .phones-row{ gap:1.6rem; }
+  .bar-row{ grid-template-columns: 84px 1fr 30px; }
+  .closing{ padding:1.5rem; flex-direction:column; align-items:flex-start; }
+  table{ min-width: 620px; }
+}
+
+@media (prefers-reduced-motion: reduce){
+  *{ animation-duration:.001ms !important; transition-duration:.001ms !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="blueprint"></div>
+
+<div class="top-strip">
+  <div class="brand">
+    <div class="brand-mark">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M14.7 6.3a1 1 0 0 0-1.4 0l-6 6a1 1 0 0 0 0 1.4l3 3a1 1 0 0 0 1.4 0l6-6a1 1 0 0 0 0-1.4l-3-3Z" stroke-linejoin="round"/><path d="m17.5 3.5 3 3"/><path d="M6 20 3 17l2-2"/><path d="m9 12 3 3"/></svg>
+    </div>
+    <div>
+      <div class="brand-name">Control Operativo</div>
+      <div class="brand-tag">Propuesta de rediseño</div>
+    </div>
+  </div>
+  <div class="status-chip"><span class="status-dot"></span> Boceto estático — sin conexión a datos reales</div>
+</div>
+
+<div class="page">
+
+  <section class="intro">
+    <div class="eyebrow">Identidad visual · v2</div>
+    <h1>Un panel que se <em>ve</em> como lo que controla.</h1>
+    <p>
+      Tu sistema gestiona grifos y una flota de tractos y carretas: es una herramienta de campo, no un SaaS de
+      oficina. Este rediseño toma prestado el lenguaje de la señalética vehicular y los tableros de instrumentos
+      — tipografía condensada, datos en monoespaciada, un naranja de seguridad como acento — para que se sienta
+      preciso, legible al sol y con autoridad de "sala de control".
+    </p>
+
+    <div class="specimen">
+      <div class="specimen-card">
+        <h4>Paleta</h4>
+        <div class="swatches">
+          <div class="swatch"><div class="swatch-fill" style="background:#0D1016"></div><span>#0D1016 ink</span></div>
+          <div class="swatch"><div class="swatch-fill" style="background:#171B23"></div><span>#171B23 surface</span></div>
+          <div class="swatch"><div class="swatch-fill" style="background:#FF6A2E"></div><span>#FF6A2E accent</span></div>
+          <div class="swatch"><div class="swatch-fill" style="background:#37D6C4"></div><span>#37D6C4 signal</span></div>
+          <div class="swatch"><div class="swatch-fill" style="background:#3ECF8E"></div><span>#3ECF8E ok</span></div>
+          <div class="swatch"><div class="swatch-fill" style="background:#F5B93D"></div><span>#F5B93D alerta</span></div>
+          <div class="swatch"><div class="swatch-fill" style="background:#FF5D5D"></div><span>#FF5D5D crítico</span></div>
+        </div>
+      </div>
+      <div class="specimen-card">
+        <h4>Tipografía</h4>
+        <div class="type-row display"><span class="sample">Grifo Chiclayo Norte</span><span class="meta">Barlow Condensed · títulos</span></div>
+        <div class="type-row body"><span class="sample">Reporte de mantenimiento</span><span class="meta">Manrope · interfaz</span></div>
+        <div class="type-row data"><span class="sample">ABC-742 · 09:12</span><span class="meta">JetBrains Mono · datos</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= PANTALLAS MÓVILES ======================= -->
+  <section class="section" id="pantallas">
+    <div class="section-head">
+      <div>
+        <div class="kicker">01 — App de campo</div>
+        <h2>Ingreso y reporte del operario</h2>
+        <p>Pensadas para usarse con guantes, sol directo y una sola mano.</p>
+      </div>
+    </div>
+
+    <div class="phones-row">
+
+      <!-- LOGIN -->
+      <div class="phone">
+        <div class="phone-screen">
+          <div class="phone-notch"></div>
+          <div class="scr-login">
+            <div class="mark">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M14.7 6.3a1 1 0 0 0-1.4 0l-6 6a1 1 0 0 0 0 1.4l3 3a1 1 0 0 0 1.4 0l6-6a1 1 0 0 0 0-1.4l-3-3Z" stroke-linejoin="round"/><path d="m17.5 3.5 3 3"/><path d="M6 20 3 17l2-2"/></svg>
+            </div>
+            <h3>Control Operativo</h3>
+            <div class="sub">Accede a tu cuenta</div>
+
+            <div class="field">
+              <label>Usuario</label>
+              <div class="input ph">GERENTE</div>
+            </div>
+            <div class="field">
+              <label>Contraseña</label>
+              <div class="input ph">••••••••</div>
+            </div>
+            <div class="check-row">
+              <div class="check-box"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></div>
+              <span>Recordar mi sesión</span>
+            </div>
+            <button class="btn btn-primary" style="margin-top:1.8rem;">
+              <svg class="icon" viewBox="0 0 24 24" style="stroke:#160801;"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+              Ingresar
+            </button>
+            <div class="foot">Sistema de Control Operativo · v2.0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OPERARIO REPORT -->
+      <div class="phone">
+        <div class="phone-screen">
+          <div class="phone-notch"></div>
+          <div class="scr-app">
+            <div class="scr-topbar">
+              <div>
+                <h4>Nuevo reporte</h4>
+                <div class="sub">Grifo · Isla 2, Lado B</div>
+              </div>
+              <div class="avatar">JR</div>
+            </div>
+
+            <div class="scr-body">
+              <div class="mini-field">
+                <label>Estación</label>
+                <div class="mini-select">
+                  <span>GRIFO CHICLAYO NORTE</span>
+                  <svg class="icon" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+                </div>
+              </div>
+
+              <div class="row-2">
+                <div class="mini-field">
+                  <label>Isla / Lado</label>
+                  <div class="mini-select"><span>Isla 2 — B</span><svg class="icon" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></div>
+                </div>
+                <div class="mini-field">
+                  <label>Producto</label>
+                  <div class="mini-select"><span>Diésel B5</span><svg class="icon" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></div>
+                </div>
+              </div>
+
+              <div class="mini-field">
+                <label>Motivo</label>
+                <div class="motivo-pill"><span class="dot"></span> Fuga de combustible</div>
+              </div>
+
+              <div class="mini-field">
+                <label>Descripción</label>
+                <div class="desc-box">Fuga leve en manguera de despacho, isla 2 lado B. Se cerró la válvula de paso y se señalizó la zona.</div>
+              </div>
+
+              <div class="mini-field">
+                <label>Evidencia fotográfica · 2/4</label>
+                <div class="photo-row">
+                  <div class="photo-slot filled"><svg class="icon" viewBox="0 0 24 24"><path d="M5 8h2l1.5-2h7L17 8h2a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13" r="3.2"/></svg></div>
+                  <div class="photo-slot filled"><svg class="icon" viewBox="0 0 24 24"><path d="M5 8h2l1.5-2h7L17 8h2a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13" r="3.2"/></svg></div>
+                  <div class="photo-slot"><svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div>
+                  <div class="photo-slot"><svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="scr-bottom-nav">
+              <div class="nav-item active">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                Nuevo
+              </div>
+              <div class="nav-item">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M6 4h9l4 4v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/><path d="M9 13h6M9 17h4"/></svg>
+                Reportes
+              </div>
+              <div class="nav-item">
+                <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v4l2.5 2.5"/></svg>
+                Soluciones
+              </div>
+              <div class="nav-item">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M3 7h18v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/><path d="M3 7 6 3h12l3 4"/></svg>
+                Inventario
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ======================= GERENCIA DASHBOARD ======================= -->
+  <section class="section" id="panel">
+    <div class="section-head">
+      <div>
+        <div class="kicker">02 — Panel de Gerencia</div>
+        <h2>Un tablero, no una hoja de cálculo con estilos</h2>
+        <p>Interfaz real y responsiva: reduce el ancho de tu ventana (o ábrelo en el celular) para ver el mismo colapso a menú lateral.</p>
+      </div>
+      <div class="status-chip"><span class="status-dot" style="background:var(--accent-2);box-shadow:0 0 0 3px var(--accent-2-dim)"></span> 7 reportes activos hoy</div>
+    </div>
+
+    <div class="browser-chrome">
+      <div class="chrome-dots"><span></span><span></span><span></span></div>
+      <div class="chrome-url mono">control-operativo.app/gerencia</div>
+    </div>
+
+    <div class="app-shell" id="appShell">
+      <div class="mobile-overlay" id="overlay"></div>
+
+      <aside class="dash-sidebar" id="sidebar">
+        <div class="sb-brand">
+          <div class="brand-mark"><svg viewBox="0 0 24 24" fill="none"><path d="M14.7 6.3a1 1 0 0 0-1.4 0l-6 6a1 1 0 0 0 0 1.4l3 3a1 1 0 0 0 1.4 0l6-6a1 1 0 0 0 0-1.4l-3-3Z" stroke-linejoin="round"/><path d="m17.5 3.5 3 3"/></svg></div>
+          <div class="sb-brand-text">Control Operativo<small>PANEL GERENCIA</small></div>
+        </div>
+
+        <nav class="sb-nav">
+          <div class="grp-label">General</div>
+          <button class="sb-link active"><svg class="icon" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>Dashboard</button>
+          <button class="sb-link"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v4l2.5 2.5"/></svg>Soluciones<span class="count">18</span></button>
+          <button class="sb-link"><svg class="icon" viewBox="0 0 24 24"><path d="M3 7h18v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/><path d="M3 7 6 3h12l3 4"/></svg>Inventario</button>
+          <div class="grp-label">Operación</div>
+          <button class="sb-link"><svg class="icon" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0-1.4 0l-6 6a1 1 0 0 0 0 1.4l3 3a1 1 0 0 0 1.4 0l6-6a1 1 0 0 0 0-1.4l-3-3Z" stroke-linejoin="round"/><path d="m17.5 3.5 3 3"/></svg>Mantenimientos</button>
+          <button class="sb-link"><svg class="icon" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c1-4 3.5-6 5.5-6s4.5 2 5.5 6"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 20c.6-2.6 1.8-4.3 3.5-5"/></svg>Usuarios</button>
+          <button class="sb-link"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.14-1.4l2-1.4-2-3.46-2.3.9a7 7 0 0 0-2.4-1.4L14 3h-4l-.16 2.24a7 7 0 0 0-2.4 1.4l-2.3-.9-2 3.46 2 1.4a7 7 0 0 0 0 2.8l-2 1.4 2 3.46 2.3-.9a7 7 0 0 0 2.4 1.4L10 21h4l.16-2.24a7 7 0 0 0 2.4-1.4l2.3.9 2-3.46-2-1.4c.09-.46.14-.93.14-1.4Z"/></svg>Configuración</button>
+        </nav>
+
+        <div class="sb-foot">
+          <div class="avatar">GM</div>
+          <div class="who"><b>Gerencia</b><span>Todas las estaciones</span></div>
+        </div>
+      </aside>
+
+      <main class="dash-main">
+        <div class="dash-topbar">
+          <button class="menu-toggle" id="menuToggle">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          </button>
+          <div>
+            <div class="kicker">Panel general</div>
+            <h3>Dashboard</h3>
+          </div>
+          <div class="filters">
+            <div class="filter-chip"><svg class="icon" viewBox="0 0 24 24"><path d="M4 5h16l-6 8v5l-4 2v-7L4 5Z"/></svg> Todas las estaciones</div>
+            <div class="filter-chip"><svg class="icon" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="16" rx="2"/><path d="M3.5 9.5h17M8 3v3M16 3v3"/></svg> Últimos 30 días</div>
+          </div>
+        </div>
+
+        <div class="dash-content">
+
+          <div class="metrics-grid">
+            <div class="metric">
+              <div class="metric-top">
+                <span class="metric-label">Reportes activos</span>
+                <div class="metric-icon" style="background:var(--accent-dim);color:var(--accent);">
+                  <svg class="icon" viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01"/><path d="M10.3 3.9 2.6 18a1.5 1.5 0 0 0 1.3 2.2h16.2a1.5 1.5 0 0 0 1.3-2.2L13.7 3.9a1.5 1.5 0 0 0-2.6 0Z"/></svg>
+                </div>
+              </div>
+              <div class="metric-value">07</div>
+              <span class="metric-delta warn">+2 desde ayer</span>
+            </div>
+            <div class="metric">
+              <div class="metric-top">
+                <span class="metric-label">Grifos monitoreados</span>
+                <div class="metric-icon" style="background:var(--accent-2-dim);color:var(--accent-2);">
+                  <svg class="icon" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0-1.4 0l-6 6a1 1 0 0 0 0 1.4l3 3a1 1 0 0 0 1.4 0l6-6a1 1 0 0 0 0-1.4l-3-3Z" stroke-linejoin="round"/><path d="m17.5 3.5 3 3"/></svg>
+                </div>
+              </div>
+              <div class="metric-value">12</div>
+              <span class="metric-delta flat">Sin cambios</span>
+            </div>
+            <div class="metric">
+              <div class="metric-top">
+                <span class="metric-label">Unidades en flota</span>
+                <div class="metric-icon" style="background:var(--ok-dim);color:var(--ok);">
+                  <svg class="icon" viewBox="0 0 24 24"><rect x="2.5" y="7" width="12" height="9" rx="1.5"/><path d="M14.5 10h3.5l3 3v3h-6.5z"/><circle cx="7" cy="18" r="1.6"/><circle cx="17" cy="18" r="1.6"/></svg>
+                </div>
+              </div>
+              <div class="metric-value">34</div>
+              <span class="metric-delta up">21 tractos · 13 carretas</span>
+            </div>
+            <div class="metric">
+              <div class="metric-top">
+                <span class="metric-label">Tiempo prom. resolución</span>
+                <div class="metric-icon" style="background:var(--warn-dim);color:var(--warn);">
+                  <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v4l2.5 2.5"/></svg>
+                </div>
+              </div>
+              <div class="metric-value">3.4<span style="font-size:1rem;color:var(--text-faint);">h</span></div>
+              <span class="metric-delta up">-0.6h vs. mes anterior</span>
+            </div>
+          </div>
+
+          <div class="charts-row">
+            <div class="panel">
+              <div class="panel-head">
+                <div>
+                  <h4>Reportes por estación</h4>
+                  <div class="cap">Últimos 30 días</div>
+                </div>
+              </div>
+              <div class="bar-list">
+                <div class="bar-row"><span class="name">Chiclayo Norte</span><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div><span class="num">18</span></div>
+                <div class="bar-row"><span class="name">Trujillo Sur</span><div class="bar-track"><div class="bar-fill" style="width:78%"></div></div><span class="num">14</span></div>
+                <div class="bar-row"><span class="name">Unidades (flota)</span><div class="bar-track"><div class="bar-fill alt" style="width:61%"></div></div><span class="num">11</span></div>
+                <div class="bar-row"><span class="name">Piura Centro</span><div class="bar-track"><div class="bar-fill" style="width:50%"></div></div><span class="num">9</span></div>
+                <div class="bar-row"><span class="name">Chimbote</span><div class="bar-track"><div class="bar-fill" style="width:33%"></div></div><span class="num">6</span></div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <div>
+                  <h4>Motivo del reporte</h4>
+                  <div class="cap">Distribución del mes</div>
+                </div>
+              </div>
+              <div class="donut-wrap">
+                <div class="donut"></div>
+                <div class="donut-legend">
+                  <div class="leg-item"><span class="leg-dot" style="background:var(--accent)"></span>Fuga combustible<b>34%</b></div>
+                  <div class="leg-item"><span class="leg-dot" style="background:var(--accent-2)"></span>Falla eléctrica<b>22%</b></div>
+                  <div class="leg-item"><span class="leg-dot" style="background:var(--ok)"></span>Mant. preventivo<b>26%</b></div>
+                  <div class="leg-item"><span class="leg-dot" style="background:var(--warn)"></span>Rotura manguera<b>18%</b></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="table-panel">
+            <div class="panel-head">
+              <div>
+                <h4>Reportes recientes</h4>
+                <div class="cap">Toca una fila para ver el detalle completo</div>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr><th>Fecha</th><th>Estación / Unidad</th><th>Motivo</th><th>Operario</th><th>Estado</th></tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="date">07 sep · 09:12</td>
+                    <td class="station">Grifo Chiclayo Norte <span style="color:var(--text-faint);font-weight:400;">— Isla 2, B</span></td>
+                    <td>Fuga de combustible</td>
+                    <td>J. Ramírez</td>
+                    <td><span class="badge danger"><span class="dot"></span>Urgente</span></td>
+                  </tr>
+                  <tr>
+                    <td class="date">06 sep · 18:40</td>
+                    <td class="station">Unidades <span style="color:var(--text-faint);font-weight:400;">— Tracto ABC-742</span></td>
+                    <td>Falla eléctrica</td>
+                    <td>M. Soto</td>
+                    <td><span class="badge warn"><span class="dot"></span>En proceso</span></td>
+                  </tr>
+                  <tr>
+                    <td class="date">06 sep · 14:05</td>
+                    <td class="station">Grifo Trujillo Sur <span style="color:var(--text-faint);font-weight:400;">— Isla 1, A</span></td>
+                    <td>Mantenimiento preventivo</td>
+                    <td>L. Vidal</td>
+                    <td><span class="badge ok"><span class="dot"></span>Resuelto</span></td>
+                  </tr>
+                  <tr>
+                    <td class="date">05 sep · 11:22</td>
+                    <td class="station">Grifo Piura Centro <span style="color:var(--text-faint);font-weight:400;">— Isla 3, B</span></td>
+                    <td>Rotura de manguera</td>
+                    <td>J. Ramírez</td>
+                    <td><span class="badge ok"><span class="dot"></span>Resuelto</span></td>
+                  </tr>
+                  <tr>
+                    <td class="date">05 sep · 08:50</td>
+                    <td class="station">Unidades <span style="color:var(--text-faint);font-weight:400;">— Carreta XYZ-118</span></td>
+                    <td>Mantenimiento preventivo</td>
+                    <td>M. Soto</td>
+                    <td><span class="badge ok"><span class="dot"></span>Resuelto</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </main>
+    </div>
+  </section>
+
+  <section class="closing">
+    <div>
+      <h3>¿Seguimos por aquí o probamos otra dirección?</h3>
+      <p>Este archivo no toca tu app real — es solo para decidir. Puedo ajustar el acento, probar una versión más minimalista, o ya aplicar esto a tus componentes React.</p>
+    </div>
+    <div class="actions">
+      <button class="btn btn-ghost">Ajustar paleta</button>
+      <button class="btn btn-primary">Aplicar al proyecto</button>
+    </div>
+  </section>
+
+  <footer class="note">Boceto estático generado como propuesta de diseño · datos de ejemplo, no reales.</footer>
+
+</div>
+
+<script>
+(function(){
+  var shell = document.getElementById('appShell');
+  var toggle = document.getElementById('menuToggle');
+  var overlay = document.getElementById('overlay');
+  function close(){ shell.classList.remove('menu-open'); }
+  toggle && toggle.addEventListener('click', function(){ shell.classList.toggle('menu-open'); });
+  overlay && overlay.addEventListener('click', close);
+
+  document.querySelectorAll('.sb-link').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('.sb-link').forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+      close();
+    });
+  });
+
+  document.querySelectorAll('.photo-slot').forEach(function(slot){
+    slot.addEventListener('click', function(){ slot.classList.toggle('filled'); });
+  });
+})();
+</script>
+
+</body>
+</html>
