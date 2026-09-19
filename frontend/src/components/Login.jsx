@@ -7,18 +7,27 @@ export default function Login({ onLogin }) {
   const [loading, setLoading] = useState(false)
   const [recordar, setRecordar] = useState(true)
 
+  // Si la señal está presente pero muy débil (o Supabase no responde), el
+  // fetch puede quedarse colgado indefinidamente sin lanzar error ni éxito:
+  // sin este timeout, el botón se quedaría en "Verificando..." para siempre
+  // y el trabajador no tendría forma de saber que debe reintentar.
+  const withTimeout = (promise, ms) => {
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('LOGIN_TIMEOUT')), ms))
+    return Promise.race([promise, timeout])
+  }
+
   const handleLogin = async (e) => {
     e.preventDefault()
     setLoading(true)
-    
+
     try {
       // La verificación de contraseña ocurre DENTRO de Supabase (función
       // login_usuario, con el hash bcrypt): el navegador nunca ve ni
       // envía la contraseña guardada, solo recibe el usuario si coincide.
-      const { data: users, error } = await supabase.rpc('login_usuario', {
+      const { data: users, error } = await withTimeout(supabase.rpc('login_usuario', {
         p_nombre: username.toUpperCase(),
         p_password: password
-      })
+      }), 15000)
 
       if (error) throw error
 

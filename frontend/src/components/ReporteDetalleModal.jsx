@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { colorDeEstado } from '../utils/estado'
 import ReporteSeguimiento from './ReporteSeguimiento'
@@ -8,18 +8,25 @@ import ReporteSeguimiento from './ReporteSeguimiento'
 // usuario u otro es si tiene permiso_editar_reportes — solo ahí aparecen los
 // botones de Editar/Eliminar; para todos los demás es de solo lectura.
 export default function ReporteDetalleModal({ reporteModal, setReporteModal, user, setReportes, showAlert, openPreview, displayIslaLado, onEditReport }) {
+  const [eliminando, setEliminando] = useState(false)
   if (!reporteModal) return null
 
   const handleDelete = async () => {
     if (!window.confirm('¿Seguro que deseas eliminar este reporte permanentemente?')) return
-    const { error } = await supabase.from('reportes').delete().eq('id', reporteModal.id)
-    if (error) {
-      showAlert('Error', error.message)
-      return
+    if (eliminando) return
+    setEliminando(true)
+    try {
+      const { error } = await supabase.from('reportes').delete().eq('id', reporteModal.id)
+      if (error) {
+        showAlert('Error', error.message)
+        return
+      }
+      setReportes(prev => prev.filter(r => r.id !== reporteModal.id))
+      setReporteModal(null)
+      showAlert('Éxito', 'Reporte eliminado.')
+    } finally {
+      setEliminando(false)
     }
-    setReportes(prev => prev.filter(r => r.id !== reporteModal.id))
-    setReporteModal(null)
-    showAlert('Éxito', 'Reporte eliminado.')
   }
 
   return (
@@ -106,7 +113,7 @@ export default function ReporteDetalleModal({ reporteModal, setReporteModal, use
 
         {user.permiso_editar_reportes && (
           <div style={{marginTop: '2rem', display: 'flex', gap: '1rem', justifyContent: 'flex-end', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1rem'}}>
-            <button className="btn-toggle" style={{borderColor: 'var(--danger)', color: 'var(--danger)'}} onClick={handleDelete}>🗑️ Eliminar</button>
+            <button className="btn-toggle" style={{borderColor: 'var(--danger)', color: 'var(--danger)'}} disabled={eliminando} onClick={handleDelete}>{eliminando ? 'Eliminando...' : '🗑️ Eliminar'}</button>
             <button className="btn-primary" onClick={() => onEditReport && onEditReport(reporteModal)}>✏️ Editar</button>
           </div>
         )}

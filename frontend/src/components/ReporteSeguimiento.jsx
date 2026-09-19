@@ -120,17 +120,27 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
     }
     setGuardando(true)
     try {
-      // Revisa el estado REAL en el servidor justo antes de guardar — si
-      // alguien más ya lo resolvió mientras tenías este formulario abierto
-      // (la pantalla no se entera al instante), esto corta el guardado en
-      // vez de dejar que se genere una actualización sobre un reporte que
-      // ya estaba cerrado.
-      const { data: fresco } = await supabase.from('reportes').select('estado, resuelto_en').eq('id', reporte.id).single()
-      if (fresco && fresco.estado === 'Resuelto' && reporte.estado !== 'Resuelto') {
+      // Revisa el estado REAL en el servidor — si alguien más ya lo resolvió
+      // mientras tenías este formulario abierto (la pantalla no se entera al
+      // instante), esto corta el guardado en vez de dejar que se genere una
+      // actualización sobre un reporte que ya estaba cerrado.
+      //
+      // Se llama dos veces: acá (para no perder tiempo subiendo fotos en
+      // vano) y de nuevo justo antes de escribir el nuevo estado — la subida
+      // de fotos puede tardar varios segundos en una red lenta, tiempo de
+      // sobra para que otra persona lo resuelva justo en el medio; sin la
+      // segunda verificación, este guardado pisaría ese "Resuelto" ajeno sin
+      // que nadie se diera cuenta.
+      const yaResueltoPorOtro = async () => {
+        const { data: fresco } = await supabase.from('reportes').select('estado, resuelto_en').eq('id', reporte.id).single()
+        return (fresco && fresco.estado === 'Resuelto' && reporte.estado !== 'Resuelto') ? fresco : null
+      }
+
+      let fresco = await yaResueltoPorOtro()
+      if (fresco) {
         showAlert('Ya fue resuelto', 'Otra persona ya marcó este reporte como Resuelto mientras lo tenías abierto. Se actualizó la pantalla.')
         onEstadoActualizado(fresco.estado, fresco.resuelto_en)
         setMostrarForm(false)
-        setGuardando(false)
         return
       }
 
@@ -146,6 +156,17 @@ export default function ReporteSeguimiento({ reporte, user, showAlert, openPrevi
         if (uploadError) throw uploadError
         const { data: urlData } = supabase.storage.from('evidencias').getPublicUrl(filePath)
         urls.push(urlData.publicUrl)
+      }
+
+      // Última verificación, justo antes de escribir: si la subida de fotos
+      // de arriba tardó, este es el momento más cercano posible a la
+      // escritura real para detectar que alguien más ya cerró el caso.
+      fresco = await yaResueltoPorOtro()
+      if (fresco) {
+        showAlert('Ya fue resuelto', 'Otra persona ya marcó este reporte como Resuelto mientras subías las fotos. Se actualizó la pantalla.')
+        onEstadoActualizado(fresco.estado, fresco.resuelto_en)
+        setMostrarForm(false)
+        return
       }
 
       const { data: nuevoRegistro, error: seguimientoError } = await supabase.from('reportes_seguimiento').insert([{

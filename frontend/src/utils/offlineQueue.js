@@ -123,8 +123,19 @@ export const syncOfflineReports = async () => {
       // Esto evita duplicados si la app se cierra en medio de la sincronización
       await removeFromQueue(report.id);
 
-      // 3. Insertar en base de datos
-      const { error: insertError } = await supabase.from('reportes').insert([dbPayload]);
+      // 3. Insertar en base de datos. Si la llamada de red falla (ej: la señal
+      // se corta justo en este momento), insert() puede LANZAR una excepción
+      // en vez de simplemente devolver { error } — sin capturarla acá, el
+      // reporte ya se había quitado de la cola en el paso 2 y se perdería para
+      // siempre. Por eso se captura también la excepción y se trata igual que
+      // un insertError: se reencola para reintentar en la próxima sincronización.
+      let insertError = null;
+      try {
+        const res = await supabase.from('reportes').insert([dbPayload]);
+        insertError = res.error;
+      } catch (thrownErr) {
+        insertError = thrownErr;
+      }
 
       if (insertError) {
         console.error('Error inserting offline report:', insertError.message);

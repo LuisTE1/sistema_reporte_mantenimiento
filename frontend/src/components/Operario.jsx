@@ -43,7 +43,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
         timer = setTimeout(() => {
           invalidateCache('operario_reportes')
           setReloadTick(t => t + 1)
-        }, 800)
+        }, 400)
       })
       .subscribe()
     return () => {
@@ -205,6 +205,22 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
 
   // Visor de Soluciones
   const [reporteModal, setReporteModal] = useState(null)
+
+  // El detalle abierto es una foto fija del momento en que se abrió — sin
+  // esto, si OTRO usuario elimina ese mismo reporte (o le cambia el
+  // estado) mientras lo tienes abierto, tu pantalla se queda mostrando
+  // datos viejos o hasta un reporte que ya no existe. Se sincroniza solo
+  // apenas la lista de reportes se actualiza.
+  useEffect(() => {
+    if (!reporteModal) return
+    const actualizado = reportes.find(r => r.id === reporteModal.id)
+    if (!actualizado) {
+      setReporteModal(null)
+      showAlert('Reporte eliminado', 'Este reporte fue eliminado por otro usuario.')
+    } else if (actualizado !== reporteModal) {
+      setReporteModal(actualizado)
+    }
+  }, [reportes])
 
   // Botón físico "Atrás": cierra primero lo más "encima" (lightbox > modales > vista de detalle),
   // y solo al final retrocede del formulario/visor al menú principal.
@@ -630,15 +646,29 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
       const fotosNombres = uploadedFotos.join(',') || 'Sin foto'
 
       let finalError = null
-      
+      // Los ajustes de stock de inventario (abajo) no deben tumbar el guardado
+      // del reporte si fallan — el reporte ya está subido y no queremos
+      // perderlo por eso. Pero si se descartara el resultado por completo (como
+      // pasaba antes: el `{ error }` de estos updates ni siquiera se leía), el
+      // trabajador vería "¡Reporte guardado exitosamente!" creyendo que todo
+      // quedó bien, mientras el stock queda desincronizado sin que nadie se
+      // entere. Por eso se registra acá y se avisa en el mensaje final.
+      let stockUpdateError = false
+
       if (editingReportId) {
         if (oldRepuestoText) {
           const { data: oldItem } = await withTimeout(supabase.from('inventario').select('*').eq('estacion', currentEstName.toUpperCase()).eq('nombre', oldRepuestoText.nombre).single(), 10000)
-          if (oldItem) await withTimeout(supabase.from('inventario').update({ stock: oldItem.stock + oldRepuestoText.qty }).eq('id', oldItem.id), 10000)
+          if (oldItem) {
+            const { error: stockErr } = await withTimeout(supabase.from('inventario').update({ stock: oldItem.stock + oldRepuestoText.qty }).eq('id', oldItem.id), 10000)
+            if (stockErr) { console.error('No se pudo revertir el stock anterior:', stockErr); stockUpdateError = true }
+          }
         }
         if (finalInvItem) {
           const { data: newItem } = await withTimeout(supabase.from('inventario').select('*').eq('id', finalInvItem.id).single(), 10000)
-          if (newItem) await withTimeout(supabase.from('inventario').update({ stock: newItem.stock - cantidadUsada }).eq('id', newItem.id), 10000)
+          if (newItem) {
+            const { error: stockErr } = await withTimeout(supabase.from('inventario').update({ stock: newItem.stock - cantidadUsada }).eq('id', newItem.id), 10000)
+            if (stockErr) { console.error('No se pudo aplicar el nuevo stock:', stockErr); stockUpdateError = true }
+          }
         }
         const { error } = await withTimeout(supabase.from('reportes').update({
           modulo, estacion_id: currentEstName, isla_lado: currentLadoText,
@@ -661,10 +691,13 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
           resuelto_en: estadoInicial === 'Resuelto' ? new Date().toISOString() : null
         }]), 12000)
         finalError = error
-        
+
         if (!error && finalInvItem) {
           const { data: newItem } = await withTimeout(supabase.from('inventario').select('*').eq('id', finalInvItem.id).single(), 10000)
-          if (newItem) await withTimeout(supabase.from('inventario').update({ stock: newItem.stock - cantidadUsada }).eq('id', newItem.id), 10000)
+          if (newItem) {
+            const { error: stockErr } = await withTimeout(supabase.from('inventario').update({ stock: newItem.stock - cantidadUsada }).eq('id', newItem.id), 10000)
+            if (stockErr) { console.error('No se pudo descontar el stock:', stockErr); stockUpdateError = true }
+          }
         }
       }
 
@@ -673,7 +706,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
       } else {
         const isEdit = !!editingReportId
         invalidateCache('operario_reportes')
-        showAlert('Éxito', isEdit ? '¡Reporte actualizado exitosamente!' : '¡Reporte guardado exitosamente!', isEdit)
+        showAlert('Éxito', (isEdit ? '¡Reporte actualizado exitosamente!' : '¡Reporte guardado exitosamente!') + (stockUpdateError ? ' (Atención: no se pudo actualizar el stock del repuesto usado, avisa a Gerencia para corregirlo manualmente.)' : ''), isEdit)
         setFotos([])
         setDescripcion('')
         setMotivo('')
@@ -686,6 +719,8 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
         setEditingReportId(null)
         setExistingFotos([])
         setFechaSuceso(formatDateTimeLocal(new Date()))
+        setTractoSeleccionado('')
+        setCarretaSeleccionada('')
       }
     } catch (err) {
       // Timeout o error de red — guardar offline automáticamente

@@ -219,6 +219,29 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
   const showAlert = (title, message) => setAppModal({ isOpen: true, title, message, type: 'alert', onConfirm: null })
   const showConfirm = (title, message, onConfirm) => setAppModal({ isOpen: true, title, message, type: 'confirm', onConfirm })
 
+  // El detalle abierto es una foto fija del momento en que se abrió — sin
+  // esto, si OTRO usuario elimina ese mismo reporte (o le cambia el
+  // estado) mientras lo tienes abierto, tu pantalla se queda mostrando
+  // datos viejos o hasta un reporte que ya no existe. Se sincroniza solo
+  // apenas la lista de reportes se actualiza.
+  useEffect(() => {
+    if (!reporteModal) return
+    const actualizado = reportes.find(r => r.id === reporteModal.id)
+    if (!actualizado) {
+      setReporteModal(null)
+      showAlert('Reporte eliminado', 'Este reporte fue eliminado por otro usuario.')
+    } else if (actualizado !== reporteModal) {
+      setReporteModal(actualizado)
+    }
+  }, [reportes])
+
+  // Guard anti-doble-submit para los formularios de este panel (crear
+  // usuario, ítems de inventario, catálogos, etc.): sin esto, un doble-click
+  // o doble-tap nervioso en "Crear"/"Añadir" puede disparar dos inserts casi
+  // simultáneos antes de que React desactive el botón (ej: dos usuarios con
+  // el mismo código de acceso, o un movimiento de stock aplicado dos veces).
+  const [formBusy, setFormBusy] = useState(false)
+
   // Estado para controlar qué estaciones están expandidas (visibles)
   const [expandedEstaciones, setExpandedEstaciones] = useState([])
   const [selectedInvEstacion, setSelectedInvEstacion] = useState('')
@@ -320,7 +343,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
       islasLados: { current: null },
     }
 
-    const debounced = (timerRef, fn, ms = 1000) => {
+    const debounced = (timerRef, fn, ms = 400) => {
       clearTimeout(timerRef.current)
       timerRef.current = setTimeout(fn, ms)
     }
@@ -364,25 +387,33 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
     // apellido, y nunca se repite (a diferencia de antes, que se escribía
     // un "nombre" cualquiera a mano y podía chocar o confundirse entre
     // personas distintas).
-    const codigo = generarCodigoUsuario(nuevoUsuario.nombres, nuevoUsuario.apellidos, usuarios.map(u => u.nombre))
-    const { data, error } = await supabase.from('usuarios').insert([{
-      nombre: codigo,
-      nombre_completo: `${nuevoUsuario.nombres.trim()} ${nuevoUsuario.apellidos.trim()}`,
-      password: nuevoUsuario.password,
-      rol: nuevoUsuario.rol,
-      estaciones: nuevoUsuario.estaciones,
-    }]).select()
-    if (error) {
-      showAlert('Error', 'Error creando usuario: ' + error.message)
-    } else {
-      setUsuarios([...usuarios, data[0]])
-      setNuevoUsuario({ nombres: '', apellidos: '', password: '', rol: 'Operario', estaciones: 'Todas' })
-      showAlert('Éxito', `Usuario creado. Su código de acceso para ingresar a la app es: ${codigo}`)
+    if (formBusy) return
+    setFormBusy(true)
+    try {
+      const codigo = generarCodigoUsuario(nuevoUsuario.nombres, nuevoUsuario.apellidos, usuarios.map(u => u.nombre))
+      const { data, error } = await supabase.from('usuarios').insert([{
+        nombre: codigo,
+        nombre_completo: `${nuevoUsuario.nombres.trim()} ${nuevoUsuario.apellidos.trim()}`,
+        password: nuevoUsuario.password,
+        rol: nuevoUsuario.rol,
+        estaciones: nuevoUsuario.estaciones,
+      }]).select()
+      if (error) {
+        showAlert('Error', 'Error creando usuario: ' + error.message)
+      } else {
+        setUsuarios([...usuarios, data[0]])
+        setNuevoUsuario({ nombres: '', apellidos: '', password: '', rol: 'Operario', estaciones: 'Todas' })
+        showAlert('Éxito', `Usuario creado. Su código de acceso para ingresar a la app es: ${codigo}`)
+      }
+    } finally {
+      setFormBusy(false)
     }
   }
 
   const handleSaveUserPermissions = async (e) => {
     e.preventDefault()
+    if (formBusy) return
+    setFormBusy(true)
     const payload = {
       rol: editingUser.rol,
       estaciones: editingUser.estaciones,
@@ -403,18 +434,22 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
     if (nuevaPasswordEdit.trim()) {
       payload.password = nuevaPasswordEdit.trim()
     }
-    const { error } = await supabase.from('usuarios').update(payload).eq('id', editingUser.id)
+    try {
+      const { error } = await supabase.from('usuarios').update(payload).eq('id', editingUser.id)
 
-    if (error) {
-      showAlert('Error', 'Error guardando permisos: ' + error.message)
-    } else {
-      // Actualiza la lista local de una vez (sin esperar a la suscripción en
-      // tiempo real), para que si el admin vuelve a abrir "Configurar
-      // Permisos" del mismo usuario, no vea los datos viejos.
-      setUsuarios(prev => prev.map(u => u.id === editingUser.id ? { ...u, ...payload } : u))
-      showAlert('Éxito', nuevaPasswordEdit.trim() ? `Información y contraseña actualizadas para ${editingUser.nombre}` : `Información actualizada para ${editingUser.nombre}`)
-      setEditingUser(null)
-      setNuevaPasswordEdit('')
+      if (error) {
+        showAlert('Error', 'Error guardando permisos: ' + error.message)
+      } else {
+        // Actualiza la lista local de una vez (sin esperar a la suscripción en
+        // tiempo real), para que si el admin vuelve a abrir "Configurar
+        // Permisos" del mismo usuario, no vea los datos viejos.
+        setUsuarios(prev => prev.map(u => u.id === editingUser.id ? { ...u, ...payload } : u))
+        showAlert('Éxito', nuevaPasswordEdit.trim() ? `Información y contraseña actualizadas para ${editingUser.nombre}` : `Información actualizada para ${editingUser.nombre}`)
+        setEditingUser(null)
+        setNuevaPasswordEdit('')
+      }
+    } finally {
+      setFormBusy(false)
     }
   }
 
@@ -441,18 +476,24 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
     if (!estacionModal.nombre || estacionModal.productosList.length === 0 || estacionModal.cantidadIslas < 1) {
       return showAlert('Aviso', 'Debe completar el nombre, añadir al menos un producto, y tener mínimo 1 isla.')
     }
-    const id = estacionModal.nombre.toLowerCase().replace(/\s/g, '_')
-    const { error } = await supabase.from('estaciones').insert([{ 
-      id, 
-      nombre: estacionModal.nombre,
-      productos_disponibles: estacionModal.productosList.join(','),
-      cantidad_islas: estacionModal.cantidadIslas
-    }])
-    if (!error) {
-      setEstacionModal({ isOpen: false, nombre: '', productosStr: '', productosList: [], cantidadIslas: 1 })
-      showAlert('Éxito', 'Estación creada exitosamente.')
-    } else {
-      showAlert('Error', 'Error creando estación: ' + error.message)
+    if (formBusy) return
+    setFormBusy(true)
+    try {
+      const id = estacionModal.nombre.toLowerCase().replace(/\s/g, '_')
+      const { error } = await supabase.from('estaciones').insert([{
+        id,
+        nombre: estacionModal.nombre,
+        productos_disponibles: estacionModal.productosList.join(','),
+        cantidad_islas: estacionModal.cantidadIslas
+      }])
+      if (!error) {
+        setEstacionModal({ isOpen: false, nombre: '', productosStr: '', productosList: [], cantidadIslas: 1 })
+        showAlert('Éxito', 'Estación creada exitosamente.')
+      } else {
+        showAlert('Error', 'Error creando estación: ' + error.message)
+      }
+    } finally {
+      setFormBusy(false)
     }
   }
 
@@ -484,19 +525,25 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
       }
     }
 
-    // Insertar un registro por cada lado ingresado
-    const insertData = lados.map(lado => ({
-      estacion_id: islaModal.estacion.id,
-      isla: parseInt(islaModal.isla),
-      lado: lado,
-      productos: islaModal.productos.join(', ')
-    }))
+    if (formBusy) return
+    setFormBusy(true)
+    try {
+      // Insertar un registro por cada lado ingresado
+      const insertData = lados.map(lado => ({
+        estacion_id: islaModal.estacion.id,
+        isla: parseInt(islaModal.isla),
+        lado: lado,
+        productos: islaModal.productos.join(', ')
+      }))
 
-    const { error } = await supabase.from('islas_lados').insert(insertData)
-    if (error) {
-      showAlert('Error', 'Error al guardar: ' + error.message)
-    } else {
-      setIslaModal({ isOpen: false, estacion: null, isla: '', ladosStr: '', productos: [] })
+      const { error } = await supabase.from('islas_lados').insert(insertData)
+      if (error) {
+        showAlert('Error', 'Error al guardar: ' + error.message)
+      } else {
+        setIslaModal({ isOpen: false, estacion: null, isla: '', ladosStr: '', productos: [] })
+      }
+    } finally {
+      setFormBusy(false)
     }
   }
 
@@ -1277,10 +1324,10 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
 
                     <div style={{display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginTop: '1rem'}}>
                       <div style={{display: 'flex', gap: '1rem'}}>
-                        <button type="submit" className="btn-primary" style={{width: 'auto'}}>Guardar Cambios</button>
+                        <button type="submit" className="btn-primary" style={{width: 'auto'}} disabled={formBusy}>{formBusy ? 'Guardando...' : 'Guardar Cambios'}</button>
                         <button type="button" className="btn-toggle" style={{width: 'auto'}} onClick={() => { setEditingUser(null); setNuevaPasswordEdit('') }}>Cancelar</button>
                       </div>
-                      <button type="button" className="btn-text" style={{color: 'var(--danger)', border: '1px solid var(--danger)', padding: '0.5rem 1rem'}} onClick={() => handleDeleteUser(editingUser.id)}>🗑️ Eliminar Usuario</button>
+                      <button type="button" className="btn-text" style={{color: 'var(--danger)', border: '1px solid var(--danger)', padding: '0.5rem 1rem'}} disabled={formBusy} onClick={() => handleDeleteUser(editingUser.id)}>🗑️ Eliminar Usuario</button>
                     </div>
                   </form>
                 </div>
@@ -1297,7 +1344,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
                         <option>Gerencia</option>
                         <option>Admin Estación</option>
                       </select>
-                      <button type="submit" className="btn-primary" style={{width: 'auto'}}>+ Crear</button>
+                      <button type="submit" className="btn-primary" style={{width: 'auto'}} disabled={formBusy}>{formBusy ? 'Creando...' : '+ Crear'}</button>
                     </form>
                   </div>
 
@@ -1366,38 +1413,44 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
                 <h4 style={{marginBottom: '1rem'}}>Añadir Ítem a {selectedInvEstacion}</h4>
                 <form onSubmit={async (e) => {
                   e.preventDefault()
+                  if (formBusy) return
                   const nombreItem = e.target.itemNombre.value.toUpperCase()
                   const stock = parseInt(e.target.itemStock.value)
                   if(!nombreItem || isNaN(stock)) return showAlert('Aviso', 'Complete los datos correctamente.')
-                  
-                  const { error, data: newInv } = await supabase.from('inventario').insert([{
-                    modulo: invModulo,
-                    estacion: invModulo === 'unidades' ? 'UNIDADES' : selectedInvEstacion,
-                    nombre: nombreItem,
-                    stock: stock,
-                    creado_por: user.nombre
-                  }]).select()
-                  
-                  if (error) showAlert('Error', 'No se pudo guardar en inventario: ' + error.message)
-                  else {
-                    if (newInv && newInv.length > 0) {
-                      await supabase.from('inventario_movimientos').insert([{
-                        inventario_id: newInv[0].id,
-                        tipo: 'INGRESO',
-                        cantidad: stock,
-                        motivo: 'Inventario Inicial',
-                        creado_por: user.nombre
-                      }])
-                      const { data: fetchMovs } = await supabase.from('inventario_movimientos').select('*').order('creado_en', { ascending: false })
-                      if (fetchMovs) setMovimientos(fetchMovs)
+                  setFormBusy(true)
+                  try {
+                    const { error, data: newInv } = await supabase.from('inventario').insert([{
+                      modulo: invModulo,
+                      estacion: invModulo === 'unidades' ? 'UNIDADES' : selectedInvEstacion,
+                      nombre: nombreItem,
+                      stock: stock,
+                      creado_por: user.nombre
+                    }]).select()
+
+                    if (error) showAlert('Error', 'No se pudo guardar en inventario: ' + error.message)
+                    else {
+                      if (newInv && newInv.length > 0) {
+                        const { error: movError } = await supabase.from('inventario_movimientos').insert([{
+                          inventario_id: newInv[0].id,
+                          tipo: 'INGRESO',
+                          cantidad: stock,
+                          motivo: 'Inventario Inicial',
+                          creado_por: user.nombre
+                        }])
+                        if (movError) console.error('El ítem se creó pero no se pudo registrar el movimiento inicial en el Kardex:', movError)
+                        const { data: fetchMovs } = await supabase.from('inventario_movimientos').select('*').order('creado_en', { ascending: false })
+                        if (fetchMovs) setMovimientos(fetchMovs)
+                      }
+                      e.target.reset()
+                      showAlert('Éxito', 'Ítem agregado correctamente.')
                     }
-                    e.target.reset()
-                    showAlert('Éxito', 'Ítem agregado correctamente.')
+                  } finally {
+                    setFormBusy(false)
                   }
                 }} style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
                   <input name="itemNombre" type="text" placeholder="Nombre del Producto / Repuesto" required style={{flex: 2, padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)', minWidth: '200px'}} />
                   <input name="itemStock" type="number" placeholder="Cantidad / Stock" required min="0" style={{flex: 1, padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)', minWidth: '100px'}} />
-                  <button type="submit" className="btn-primary" style={{width: 'auto'}}>+ Añadir</button>
+                  <button type="submit" className="btn-primary" style={{width: 'auto'}} disabled={formBusy}>{formBusy ? 'Añadiendo...' : '+ Añadir'}</button>
                 </form>
               </div>
 
@@ -1485,37 +1538,43 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
                       <h4 style={{marginBottom: '1rem', color: 'var(--text-soft)'}}>Nuevo Movimiento (Ajuste)</h4>
                       <form onSubmit={async (e) => {
                         e.preventDefault()
+                        if (formBusy) return
                         const tipo = e.target.tipoMov.value
                         const cantidad = parseInt(e.target.cantMov.value)
                         const motivo = e.target.motivoMov.value
-                        
+
                         if (tipo === 'SALIDA' && cantidad > kardexModal.stock) {
                           return showAlert('Error', 'No hay stock suficiente para esta salida.')
                         }
-                        
-                        const nuevoStock = tipo === 'INGRESO' ? kardexModal.stock + cantidad : kardexModal.stock - cantidad
-                        
-                        // 1. Actualizar stock
-                        const { error: errInv } = await supabase.from('inventario').update({ stock: nuevoStock }).eq('id', kardexModal.id)
-                        if (errInv) return showAlert('Error', errInv.message)
-                        
-                        // 2. Insertar movimiento
-                        const { error: errMov } = await supabase.from('inventario_movimientos').insert([{
-                          inventario_id: kardexModal.id,
-                          tipo: tipo,
-                          cantidad: cantidad,
-                          motivo: motivo,
-                          creado_por: user.nombre
-                        }])
-                        if (errMov) return showAlert('Error Insertando Movimiento', errMov.message)
-                        
-                        // 3. Recargar
-                        const { data } = await supabase.from('inventario_movimientos').select('*').order('creado_en', { ascending: false })
-                        if (data) setMovimientos(data)
-                        
-                        setKardexModal({...kardexModal, stock: nuevoStock})
-                        e.target.reset()
-                        showAlert('Éxito', 'Movimiento registrado.')
+
+                        setFormBusy(true)
+                        try {
+                          const nuevoStock = tipo === 'INGRESO' ? kardexModal.stock + cantidad : kardexModal.stock - cantidad
+
+                          // 1. Actualizar stock
+                          const { error: errInv } = await supabase.from('inventario').update({ stock: nuevoStock }).eq('id', kardexModal.id)
+                          if (errInv) return showAlert('Error', errInv.message)
+
+                          // 2. Insertar movimiento
+                          const { error: errMov } = await supabase.from('inventario_movimientos').insert([{
+                            inventario_id: kardexModal.id,
+                            tipo: tipo,
+                            cantidad: cantidad,
+                            motivo: motivo,
+                            creado_por: user.nombre
+                          }])
+                          if (errMov) return showAlert('Error Insertando Movimiento', errMov.message)
+
+                          // 3. Recargar
+                          const { data } = await supabase.from('inventario_movimientos').select('*').order('creado_en', { ascending: false })
+                          if (data) setMovimientos(data)
+
+                          setKardexModal({...kardexModal, stock: nuevoStock})
+                          e.target.reset()
+                          showAlert('Éxito', 'Movimiento registrado.')
+                        } finally {
+                          setFormBusy(false)
+                        }
                       }} style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-end'}}>
                         <div style={{flex: 1, minWidth: '100px'}}>
                           <label style={{fontSize: '0.8rem', color: 'var(--text-muted)'}}>Tipo</label>
@@ -1532,7 +1591,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
                           <label style={{fontSize: '0.8rem', color: 'var(--text-muted)'}}>Motivo / Descripción</label>
                           <input type="text" name="motivoMov" required placeholder="Ej: Préstamo a estación X" style={{width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--card-bg)', color: 'white', border: '1px solid var(--border-soft)'}} />
                         </div>
-                        <button type="submit" className="btn-primary" style={{width: 'auto', padding: '0.5rem 1rem'}}>Guardar</button>
+                        <button type="submit" className="btn-primary" style={{width: 'auto', padding: '0.5rem 1rem'}} disabled={formBusy}>{formBusy ? 'Guardando...' : 'Guardar'}</button>
                       </form>
                     </div>
 
@@ -1584,20 +1643,26 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
               <div style={{background: 'var(--card-bg)', padding: '1.5rem', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '2rem'}}>
                 <form onSubmit={async (e) => {
                   e.preventDefault()
+                  if (formBusy) return
                   if(!nuevoMantenimiento.trim()) return showAlert('Aviso', 'Ingrese un nombre válido.')
                   const nombreUpper = nuevoMantenimiento.trim().toUpperCase()
                   const existe = mantenimientoTipos.find(mt => mt.nombre === nombreUpper)
                   if(existe) return showAlert('Aviso', 'Este tipo de mantenimiento ya existe.')
-                  
-                  const { error } = await supabase.from('mantenimiento_tipos').insert([{ nombre: nombreUpper, modulo: mantModulo }])
-                  if (error) showAlert('Error', 'No se pudo guardar: ' + error.message)
-                  else {
-                    setNuevoMantenimiento('')
-                    showAlert('Éxito', 'Tipo de mantenimiento agregado.')
+
+                  setFormBusy(true)
+                  try {
+                    const { error } = await supabase.from('mantenimiento_tipos').insert([{ nombre: nombreUpper, modulo: mantModulo }])
+                    if (error) showAlert('Error', 'No se pudo guardar: ' + error.message)
+                    else {
+                      setNuevoMantenimiento('')
+                      showAlert('Éxito', 'Tipo de mantenimiento agregado.')
+                    }
+                  } finally {
+                    setFormBusy(false)
                   }
                 }} style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
                   <input type="text" placeholder="Ej: CAMBIO DE PISTOLA" value={nuevoMantenimiento} onChange={e => setNuevoMantenimiento(e.target.value)} required style={{flex: 1, padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)', minWidth: '200px'}} />
-                  <button type="submit" className="btn-primary" style={{width: 'auto'}}>+ Añadir Tipo</button>
+                  <button type="submit" className="btn-primary" style={{width: 'auto'}} disabled={formBusy}>{formBusy ? 'Añadiendo...' : '+ Añadir Tipo'}</button>
                 </form>
               </div>
 
@@ -1784,22 +1849,28 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
                         <>
                           <form onSubmit={async (e) => {
                             e.preventDefault()
+                            if (formBusy) return
                             if(!nuevoTracto.trim()) return showAlert('Aviso', 'Ingrese una placa válida.')
                             const placaUpper = nuevoTracto.trim().toUpperCase()
                             const existe = unidadesTractos.find(t => t.placa === placaUpper)
                             if(existe) return showAlert('Aviso', 'Este tracto ya existe.')
-                            
-                            const { error } = await supabase.from('unidades_tractos').insert([{ placa: placaUpper }])
-                            if (error) showAlert('Error', 'No se pudo guardar: ' + error.message)
-                            else {
-                              setNuevoTracto('')
-                              const { data } = await supabase.from('unidades_tractos').select('*').order('placa')
-                              setUnidadesTractos(data)
-                              showAlert('Éxito', 'Tracto agregado.')
+
+                            setFormBusy(true)
+                            try {
+                              const { error } = await supabase.from('unidades_tractos').insert([{ placa: placaUpper }])
+                              if (error) showAlert('Error', 'No se pudo guardar: ' + error.message)
+                              else {
+                                setNuevoTracto('')
+                                const { data } = await supabase.from('unidades_tractos').select('*').order('placa')
+                                setUnidadesTractos(data)
+                                showAlert('Éxito', 'Tracto agregado.')
+                              }
+                            } finally {
+                              setFormBusy(false)
                             }
                           }} style={{display: 'flex', gap: '0.5rem', marginBottom: '1rem'}}>
                             <input type="text" placeholder="Placa Tracto" value={nuevoTracto} onChange={e => setNuevoTracto(e.target.value)} required style={{flex: 1, padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)'}} />
-                            <button type="submit" className="btn-primary" style={{width: 'auto', padding: '0.5rem 1rem'}}>+</button>
+                            <button type="submit" className="btn-primary" style={{width: 'auto', padding: '0.5rem 1rem'}} disabled={formBusy}>+</button>
                           </form>
                           
                           <div style={{maxHeight: '300px', overflowY: 'auto'}}>
@@ -1842,22 +1913,28 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
                     <>
                       <form onSubmit={async (e) => {
                         e.preventDefault()
+                        if (formBusy) return
                         if(!nuevaCarreta.trim()) return showAlert('Aviso', 'Ingrese una placa válida.')
                         const placaUpper = nuevaCarreta.trim().toUpperCase()
                         const existe = unidadesCarretas.find(c => c.placa === placaUpper)
                         if(existe) return showAlert('Aviso', 'Esta carreta ya existe.')
-                        
-                        const { error } = await supabase.from('unidades_carretas').insert([{ placa: placaUpper }])
-                        if (error) showAlert('Error', 'No se pudo guardar: ' + error.message)
-                        else {
-                          setNuevaCarreta('')
-                          const { data } = await supabase.from('unidades_carretas').select('*').order('placa')
-                          setUnidadesCarretas(data)
-                          showAlert('Éxito', 'Carreta agregada.')
+
+                        setFormBusy(true)
+                        try {
+                          const { error } = await supabase.from('unidades_carretas').insert([{ placa: placaUpper }])
+                          if (error) showAlert('Error', 'No se pudo guardar: ' + error.message)
+                          else {
+                            setNuevaCarreta('')
+                            const { data } = await supabase.from('unidades_carretas').select('*').order('placa')
+                            setUnidadesCarretas(data)
+                            showAlert('Éxito', 'Carreta agregada.')
+                          }
+                        } finally {
+                          setFormBusy(false)
                         }
                       }} style={{display: 'flex', gap: '0.5rem', marginBottom: '1rem'}}>
                         <input type="text" placeholder="Placa Carreta" value={nuevaCarreta} onChange={e => setNuevaCarreta(e.target.value)} required style={{flex: 1, padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)'}} />
-                        <button type="submit" className="btn-primary" style={{width: 'auto', padding: '0.5rem 1rem'}}>+</button>
+                        <button type="submit" className="btn-primary" style={{width: 'auto', padding: '0.5rem 1rem'}} disabled={formBusy}>+</button>
                       </form>
                       
                       <div style={{maxHeight: '300px', overflowY: 'auto'}}>
@@ -1928,7 +2005,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
                   </div>
 
                   <div style={{display: 'flex', gap: '1rem', marginTop: '2rem'}}>
-                    <button type="submit" className="btn-primary" style={{flex: 1}}>Crear Estación</button>
+                    <button type="submit" className="btn-primary" style={{flex: 1}} disabled={formBusy}>{formBusy ? 'Creando...' : 'Crear Estación'}</button>
                     <button type="button" className="btn-toggle" style={{flex: 1}} onClick={() => setEstacionModal({ isOpen: false, nombre: '', productosStr: '', productosList: [], cantidadIslas: 1 })}>Cancelar</button>
                   </div>
                 </form>
@@ -1967,7 +2044,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
                   </div>
 
                   <div style={{display: 'flex', gap: '1rem', marginTop: '2rem'}}>
-                    <button type="submit" className="btn-primary" style={{flex: 1}}>Guardar Configuración</button>
+                    <button type="submit" className="btn-primary" style={{flex: 1}} disabled={formBusy}>{formBusy ? 'Guardando...' : 'Guardar Configuración'}</button>
                     <button type="button" className="btn-toggle" style={{flex: 1}} onClick={() => setIslaModal({...islaModal, isOpen: false})}>Cancelar</button>
                   </div>
                 </form>
@@ -1983,7 +2060,15 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, p
                 <div style={{display: 'flex', gap: '1rem', justifyContent: 'center'}}>
                   {appModal.type === 'confirm' ? (
                     <>
-                      <button className="btn-primary" onClick={() => { appModal.onConfirm(); setAppModal({...appModal, isOpen: false}) }}>Aceptar</button>
+                      <button className="btn-primary" onClick={() => {
+                        // Cierra el modal ANTES de ejecutar la acción (no después): así el
+                        // botón "Aceptar" desaparece de inmediato y un segundo tap rápido
+                        // (doble-tap nervioso) no le pega a nada, evitando eliminar/actualizar
+                        // el mismo registro dos veces.
+                        const accion = appModal.onConfirm
+                        setAppModal({...appModal, isOpen: false})
+                        accion && accion()
+                      }}>Aceptar</button>
                       <button className="btn-toggle" onClick={() => setAppModal({...appModal, isOpen: false})}>Cancelar</button>
                     </>
                   ) : (
