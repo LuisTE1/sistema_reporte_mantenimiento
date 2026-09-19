@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import { descargarTexto } from '../utils/download'
+import { DownloadIcon, TrashIcon, CheckCircleIcon, PulseIcon } from '../utils/icons'
 
 // Convierte una URL pública de Supabase Storage de vuelta al "path" interno
 // que necesita storage.remove() para borrar el archivo.
@@ -120,24 +121,24 @@ export default function MantenimientoSistema({ user, showAlert, showConfirm }) {
     <div className="table-container">
       <h3 className="mb-4">Mantenimiento del Sistema</h3>
 
-      <div style={{background: '#0f172a', padding: '1.5rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '1.5rem'}}>
-        <h4 style={{marginBottom: '0.5rem'}}>💾 Respaldo de Datos</h4>
+      <div style={{background: 'var(--card-bg)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '1.5rem'}}>
+        <h4 style={{marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem'}}><DownloadIcon size={18} /> Respaldo de Datos</h4>
         <p className="text-muted" style={{fontSize: '0.85rem', marginBottom: '1rem'}}>Descarga un archivo con todos los reportes, seguimientos, inventario y usuarios (sin contraseñas). Las fotos NO se incluyen en el archivo (siguen en Supabase Storage); esto es un respaldo de los datos, no de las imágenes.</p>
-        <button className="btn-primary" style={{width: 'auto'}} disabled={generandoRespaldo} onClick={generarRespaldo}>
-          {generandoRespaldo ? 'Generando...' : '⬇ Descargar Respaldo (JSON)'}
+        <button className="btn-primary" style={{width: 'auto', display: 'inline-flex', alignItems: 'center', gap: '0.5rem'}} disabled={generandoRespaldo} onClick={generarRespaldo}>
+          <DownloadIcon size={16} /> {generandoRespaldo ? 'Generando...' : 'Descargar Respaldo (JSON)'}
         </button>
       </div>
 
-      <div style={{background: '#0f172a', padding: '1.5rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '1.5rem'}}>
-        <h4 style={{marginBottom: '0.5rem'}}>🧹 Depurar Fotos Antiguas</h4>
+      <div style={{background: 'var(--card-bg)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '1.5rem'}}>
+        <h4 style={{marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem'}}><TrashIcon size={18} /> Depurar Fotos Antiguas</h4>
         <p className="text-muted" style={{fontSize: '0.85rem', marginBottom: '1rem'}}>
           Busca reportes ya <strong>Resueltos</strong> hace más de cierto tiempo y permite borrar sus fotos para liberar espacio (el texto del reporte y su historial se conservan). No se ejecuta solo — tú decides cuándo y revisas la lista antes de confirmar.
         </p>
         <div style={{display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap'}}>
-          <label style={{fontSize: '0.9rem', color: '#94a3b8'}}>Resueltos hace más de</label>
-          <input type="number" min="1" value={diasUmbral} onChange={e => setDiasUmbral(parseInt(e.target.value) || 1)} style={{width: '80px', padding: '0.4rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}} />
-          <label style={{fontSize: '0.9rem', color: '#94a3b8'}}>días</label>
-          <button className="btn-secondary" style={{width: 'auto'}} disabled={buscando} onClick={buscarCandidatos}>{buscando ? 'Buscando...' : 'Buscar'}</button>
+          <label style={{fontSize: '0.9rem', color: 'var(--text-muted)'}}>Resueltos hace más de</label>
+          <input type="number" min="1" value={diasUmbral} onChange={e => setDiasUmbral(parseInt(e.target.value) || 1)} style={{width: '80px', padding: '0.4rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)'}} />
+          <label style={{fontSize: '0.9rem', color: 'var(--text-muted)'}}>días</label>
+          <button className="btn-toggle" style={{width: 'auto'}} disabled={buscando} onClick={buscarCandidatos}>{buscando ? 'Buscando...' : 'Buscar'}</button>
         </div>
 
         {candidatos !== null && (
@@ -147,38 +148,38 @@ export default function MantenimientoSistema({ user, showAlert, showConfirm }) {
             <>
               <div style={{maxHeight: '260px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '1rem'}}>
                 {candidatos.map(r => (
-                  <label key={r.id} style={{display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#1e293b', padding: '0.5rem 0.75rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85rem'}}>
+                  <label key={r.id} style={{display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-elevated)', padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: '0.85rem'}}>
                     <input type="checkbox" checked={seleccionados.has(r.id)} onChange={() => toggleSeleccion(r.id)} />
                     <span>#{r.id} · {r.motivo} · {r.estacion_id} · resuelto {r.resuelto_en ? new Date(r.resuelto_en + (r.resuelto_en.endsWith('Z') ? '' : 'Z')).toLocaleDateString() : '?'}</span>
                   </label>
                 ))}
               </div>
-              <button className="btn-secondary" style={{borderColor: '#ef4444', color: '#ef4444', width: 'auto'}} disabled={limpiando || seleccionados.size === 0} onClick={ejecutarLimpieza}>
-                {limpiando ? 'Eliminando...' : `🗑️ Eliminar fotos de ${seleccionados.size} seleccionado(s)`}
+              <button className="btn-toggle" style={{borderColor: 'var(--danger)', color: 'var(--danger)', width: 'auto', display: 'inline-flex', alignItems: 'center', gap: '0.5rem'}} disabled={limpiando || seleccionados.size === 0} onClick={ejecutarLimpieza}>
+                <TrashIcon size={16} /> {limpiando ? 'Eliminando...' : `Eliminar fotos de ${seleccionados.size} seleccionado(s)`}
               </button>
             </>
           )
         )}
       </div>
 
-      <div style={{background: '#0f172a', padding: '1.5rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)'}}>
+      <div style={{background: 'var(--card-bg)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.1)'}}>
         <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem'}}>
-          <h4 style={{margin: 0}}>🩺 Errores Recientes de la App</h4>
+          <h4 style={{margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem'}}><PulseIcon size={18} /> Errores Recientes de la App</h4>
           <button className="btn-text" onClick={cargarErrores}>Actualizar</button>
         </div>
         {cargandoErrores ? (
           <p className="text-muted">Cargando...</p>
         ) : errores.length === 0 ? (
-          <p className="text-muted">Sin errores registrados. 🎉</p>
+          <p className="text-muted" style={{display: 'flex', alignItems: 'center', gap: '0.4rem'}}><CheckCircleIcon size={16} style={{color: 'var(--accent)'}} /> Sin errores registrados.</p>
         ) : (
           <div style={{maxHeight: '320px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
             {errores.map(err => (
-              <div key={err.id} style={{background: '#1e293b', padding: '0.6rem 0.8rem', borderRadius: '6px', borderLeft: '3px solid #ef4444', fontSize: '0.8rem'}}>
-                <div style={{display: 'flex', justifyContent: 'space-between', color: '#94a3b8', marginBottom: '0.25rem', flexWrap: 'wrap', gap: '0.5rem'}}>
+              <div key={err.id} style={{background: 'var(--bg-elevated)', padding: '0.6rem 0.8rem', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--danger)', fontSize: '0.8rem'}}>
+                <div style={{display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)', marginBottom: '0.25rem', flexWrap: 'wrap', gap: '0.5rem'}}>
                   <span>{err.usuario || 'Anónimo'}</span>
                   <span>{err.creado_en ? new Date(err.creado_en + (err.creado_en.endsWith('Z') ? '' : 'Z')).toLocaleString() : ''}</span>
                 </div>
-                <div style={{color: '#e2e8f0'}}>{err.mensaje}</div>
+                <div style={{color: 'var(--text-soft)'}}>{err.mensaje}</div>
               </div>
             ))}
           </div>

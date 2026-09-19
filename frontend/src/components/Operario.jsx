@@ -7,12 +7,16 @@ import { useBackHandler } from '../utils/backButton'
 import { getCached, setCached, invalidateCache, getCachedStale } from '../utils/cache'
 import { compressImage } from '../utils/image'
 import { ESTADOS, colorDeEstado } from '../utils/estado'
-import ReporteSeguimiento from './ReporteSeguimiento'
 import ZoomableImage from './ZoomableImage'
 import { descargarImagen } from '../utils/download'
+import { GasPumpIcon, TruckIcon, BookIcon, ChartIcon, RefreshIcon, ClockIcon } from '../utils/icons'
+import { actualizarBadge } from '../utils/push'
+import { nombreVisible, iniciales, puedeVerReporte } from '../utils/usuario'
+import VisorSoluciones from './VisorSoluciones'
+import ReporteDetalleModal from './ReporteDetalleModal'
 
 
-export default function Operario({ onLogout, user, onSwitchView, reportToEdit, setReportToEdit }) {
+export default function Operario({ onLogout, user, onSwitchView, reportToEdit, setReportToEdit, pendingReportId, onPendingReportHandled }) {
   const [modulo, setModulo] = useState(null)
   const [isSyncingBtn, setIsSyncingBtn] = useState(false)
   // Se incrementa cada vez que vuelve la conexión (evento 'sm-reconectado'
@@ -25,7 +29,29 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
     window.addEventListener('sm-reconectado', onReconectado)
     return () => window.removeEventListener('sm-reconectado', onReconectado)
   }, [])
-  
+
+  // Suscripción en tiempo real a reportes: sin esto, la lista de Operario
+  // dependía solo de la caché de 60s, así que si alguien más resolvía un
+  // reporte, acá se seguía viendo "Pendiente"/"En Proceso" por casi un
+  // minuto — suficiente para alcanzar a generar una actualización sobre un
+  // reporte que ya estaba cerrado. Con esto se entera casi al instante.
+  useEffect(() => {
+    let timer = null
+    const channel = supabase.channel('operario-reportes-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reportes' }, () => {
+        clearTimeout(timer)
+        timer = setTimeout(() => {
+          invalidateCache('operario_reportes')
+          setReloadTick(t => t + 1)
+        }, 800)
+      })
+      .subscribe()
+    return () => {
+      clearTimeout(timer)
+      supabase.removeChannel(channel)
+    }
+  }, [])
+
   // Datos Reales de Supabase
   const [estaciones, setEstaciones] = useState([])
   const [islasLados, setIslasLados] = useState([])
@@ -101,7 +127,30 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
     setPreviewImage(previewGallery[idx])
   }
   const [reportes, setReportes] = useState([])
-  
+
+  // Numerito del ícono de la app (como WhatsApp): refleja los reportes
+  // pendientes cada vez que la lista se actualiza — solo cuenta los que
+  // este usuario realmente puede ver (misma regla que usa el servidor al
+  // mandar la notificación), no el total de la empresa.
+  useEffect(() => {
+    actualizarBadge(reportes.filter(r => (r.estado || 'Pendiente') !== 'Resuelto' && puedeVerReporte(user, r)).length)
+  }, [reportes, user])
+
+  // Notificación push tocada: abre ese reporte directo, sin que el
+  // usuario tenga que buscarlo.
+  useEffect(() => {
+    if (!pendingReportId) return
+    if (modulo !== 'visor') { setModulo('visor'); return }
+    const encontrado = reportes.find(r => r.id === pendingReportId)
+    if (encontrado) {
+      // Una notificación vieja o de otro dispositivo podría apuntar a un
+      // reporte que ya no le corresponde ver a este usuario (o nunca le
+      // correspondió) — no se abre si no tiene permiso.
+      if (puedeVerReporte(user, encontrado)) setReporteModal(encontrado)
+      onPendingReportHandled && onPendingReportHandled()
+    }
+  }, [pendingReportId, reportes, modulo])
+
   const [editingReportId, setEditingReportId] = useState(null)
 
   // Estado Modal Universal para evitar alertas nativas
@@ -155,9 +204,6 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
   const showAlert = (title, message, isEditSuccess = false) => setAppModal({ isOpen: true, title, message, isEditSuccess })
 
   // Visor de Soluciones
-  const [visorModulo, setVisorModulo] = useState('grifo')
-  const [filtroEstacion, setFiltroEstacion] = useState('Todas')
-  const [busquedaPlaca, setBusquedaPlaca] = useState('')
   const [reporteModal, setReporteModal] = useState(null)
 
   // Botón físico "Atrás": cierra primero lo más "encima" (lightbox > modales > vista de detalle),
@@ -216,10 +262,18 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
       if (catalogos.carretas) setUnidadesCarretas(catalogos.carretas)
     }
     fetchIniciales()
-  }, [reloadTick])
+    // user.estaciones también como dependencia: si Gerencia le cambia las
+    // estaciones asignadas a alguien que ya tiene la app abierta, esto tiene
+    // que recalcularse solo — si no, se queda con el alcance viejo (menos
+    // estaciones) aunque el permiso ya se haya actualizado en vivo.
+  }, [reloadTick, user.estaciones])
 
   useEffect(() => {
-    if (modulo === 'visor') {
+    // También en el menú principal (modulo === null), no solo dentro del
+    // Visor: si no, el numerito del ícono se calcula con la lista vacía
+    // apenas se abre la app (antes de entrar al Visor) y borra el badge
+    // aunque sigan pendientes de verdad sin resolver.
+    if (modulo === 'visor' || modulo === null) {
       const fetchReportes = async () => {
         const cacheKey = 'operario_reportes'
         let data = getCached(cacheKey, 60 * 1000)
@@ -236,7 +290,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
         if (data) {
           if (user.estaciones !== 'Todas') {
             const permitidas = user.estaciones.split(',').map(s => s.trim())
-            setReportes(data.filter(r => permitidas.includes(r.estacion_id) || (user.permisos.unidades && r.modulo === 'unidades')))
+            setReportes(data.filter(r => permitidas.includes(r.estacion_id) || ((user.permisos.unidades || user.permisos.verUnidades) && r.modulo === 'unidades')))
           } else {
             setReportes(data)
           }
@@ -663,9 +717,9 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
   // sacan aquí como funciones y se agregan a CADA pantalla.
   const renderAppModal = () => appModal.isOpen && (
     <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: '1rem'}}>
-      <div style={{background: '#0f172a', padding: '2rem', borderRadius: '12px', border: '1px solid #3b82f6', width: '100%', maxWidth: '400px', textAlign: 'center'}}>
-        <h3 style={{marginBottom: '1rem', color: appModal.title === 'Error' || appModal.title === 'Atención' || appModal.title === 'Stock Insuficiente' ? '#ef4444' : '#3b82f6'}}>{appModal.title}</h3>
-        <p style={{marginBottom: '2rem', color: '#e2e8f0'}}>{appModal.message}</p>
+      <div style={{background: 'var(--card-bg)', padding: '2rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-soft)', boxShadow: 'var(--shadow-float)', width: '100%', maxWidth: '400px', textAlign: 'center'}}>
+        <h3 style={{marginBottom: '1rem', color: appModal.title === 'Error' || appModal.title === 'Atención' || appModal.title === 'Stock Insuficiente' ? 'var(--danger)' : 'var(--primary)'}}>{appModal.title}</h3>
+        <p style={{marginBottom: '2rem', color: 'var(--text-soft)'}}>{appModal.message}</p>
         <div style={{display: 'flex', gap: '1rem'}}>
           {appModal.isEditSuccess ? (
             <button className="btn-primary" style={{flex: 1}} onClick={() => {
@@ -677,7 +731,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
             <>
               <button className="btn-primary" style={{flex: 1}} onClick={() => setAppModal({...appModal, isOpen: false})}>Entendido</button>
               {appModal.title === 'Éxito' && (
-                <button className="btn-secondary" style={{flex: 1}} onClick={() => { setAppModal({...appModal, isOpen: false}); setModulo(null); }}>Volver al Menú</button>
+                <button className="btn-toggle" style={{flex: 1}} onClick={() => { setAppModal({...appModal, isOpen: false}); setModulo(null); }}>Volver al Menú</button>
               )}
             </>
           )}
@@ -711,7 +765,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
         onError={() => setPreviewLoading(false)}
         onSwipeLeft={previewGallery.length > 1 ? showNextPreview : undefined}
         onSwipeRight={previewGallery.length > 1 ? showPrevPreview : undefined}
-        style={{maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: '8px', opacity: previewLoading ? 0 : 1, transition: 'opacity 0.15s'}}
+        style={{maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: 'var(--radius-md)', opacity: previewLoading ? 0 : 1, transition: 'opacity 0.15s'}}
       />
     </div>
   )
@@ -719,59 +773,63 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
   if (!modulo) {
     return (
       <div className="flex-center">
-        <div className="login-card" style={{padding: '2rem'}}>
+        <div className="login-card menu-card" style={{padding: '2rem'}}>
           <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem'}}>
             <div>
-              <h2 style={{fontSize: '1.25rem'}}>Hola, {user.nombre}</h2>
+              <h2 style={{fontSize: '1.25rem'}}>Hola, {nombreVisible(user)}</h2>
               <p className="subtitle">¿Qué deseas reportar hoy?</p>
             </div>
-            <div className="user-avatar" onClick={() => window.confirm('�Desea cerrar sesi�n?') && onLogout()}>{user.nombre.substring(0,2)}</div>
+            <div className="user-avatar" onClick={() => window.confirm('�Desea cerrar sesi�n?') && onLogout()}>{iniciales(user)}</div>
           </div>
           <div className="module-buttons">
             {user.permisos.grifos && (
               <button className="btn-module" onClick={() => handleNewReport('grifo')}>
-                <span className="emoji">⛽</span><span>Sistema Grifo</span>
+                <GasPumpIcon size={22} /><span>Sistema Grifo</span>
               </button>
             )}
             {user.permisos.unidades && (
               <button className="btn-module" onClick={() => handleNewReport('unidades')}>
-                <span className="emoji">🚛</span><span>Sistema Unidades</span>
+                <TruckIcon size={22} /><span>Sistema Unidades</span>
               </button>
             )}
-            <button className="btn-module" onClick={() => setModulo('visor')}>
-              <span className="emoji">📚</span><span>Visor de Soluciones</span>
-            </button>
+            {user.permisos.soluciones && (
+              <button className="btn-module" onClick={() => setModulo('visor')}>
+                <BookIcon size={22} /><span>Visor de Soluciones</span>
+              </button>
+            )}
 
             {(user.permisos.dashboard || user.permisos.inventario || user.permisos.config) && (
-              <button className="btn-module" style={{background: '#1e3a8a', border: '2px solid #3b82f6'}} onClick={onSwitchView}>
-                <span className="emoji">📊</span><span>Ver Dashboard y Panel Administrativo</span>
+              <button className="btn-module" style={{background: 'rgba(59, 130, 246, 0.12)', borderColor: 'rgba(59, 130, 246, 0.4)'}} onClick={onSwitchView}>
+                <ChartIcon size={22} /><span>Panel Administrativo</span>
               </button>
             )}
 
-            <button 
-              className="btn-module" 
-              style={{background: '#065f46', fontSize: '0.85rem', opacity: isSyncingBtn ? 0.7 : 1}}
-              disabled={isSyncingBtn}
-              onClick={async () => {
-                setIsSyncingBtn(true)
-                const result = await syncOfflineReports()
-                setIsSyncingBtn(false)
-                if (result.alreadyRunning) {
-                  showAlert('⏳ Espera', 'Ya se está sincronizando en segundo plano. Espera un momento.')
-                } else if (result.offline) {
-                  showAlert('⚠️ Sin conexión', 'Aún no hay internet. Los reportes se enviarán automáticamente cuando recuperes señal.')
-                } else if (result.synced > 0) {
-                  showAlert('✅ Sincronizado', `${result.synced} reporte(s) pendientes fueron enviados exitosamente.`)
-                } else if (result.total === 0) {
-                  showAlert('✅ Al día', 'No tienes reportes pendientes de enviar.')
-                } else {
-                  showAlert('⚠️ Error', 'Hubo un problema al sincronizar. Intenta de nuevo.')
-                }
-              }}
-            >
-              <span className="emoji">{isSyncingBtn ? '⏳' : '🔄'}</span>
-              <span>{isSyncingBtn ? 'Sincronizando...' : 'Subir Pendientes'}</span>
-            </button>
+            {(user.permisos.grifos || user.permisos.unidades) && (
+              <button
+                className="btn-module"
+                style={{background: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.35)', fontSize: '0.85rem', opacity: isSyncingBtn ? 0.7 : 1}}
+                disabled={isSyncingBtn}
+                onClick={async () => {
+                  setIsSyncingBtn(true)
+                  const result = await syncOfflineReports()
+                  setIsSyncingBtn(false)
+                  if (result.alreadyRunning) {
+                    showAlert('⏳ Espera', 'Ya se está sincronizando en segundo plano. Espera un momento.')
+                  } else if (result.offline) {
+                    showAlert('⚠️ Sin conexión', 'Aún no hay internet. Los reportes se enviarán automáticamente cuando recuperes señal.')
+                  } else if (result.synced > 0) {
+                    showAlert('✅ Sincronizado', `${result.synced} reporte(s) pendientes fueron enviados exitosamente.`)
+                  } else if (result.total === 0) {
+                    showAlert('✅ Al día', 'No tienes reportes pendientes de enviar.')
+                  } else {
+                    showAlert('⚠️ Error', 'Hubo un problema al sincronizar. Intenta de nuevo.')
+                  }
+                }}
+              >
+                {isSyncingBtn ? <ClockIcon size={22} /> : <RefreshIcon size={22} />}
+                <span>{isSyncingBtn ? 'Sincronizando...' : 'Subir Pendientes'}</span>
+              </button>
+            )}
 
           </div>
           <button className="btn-text full-width mt-4" onClick={() => window.confirm('¿Desea cerrar sesión?') && onLogout()}>Cerrar Sesión</button>
@@ -782,185 +840,40 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
   }
 
   if (modulo === 'visor') {
-    const reportesDelModulo = reportes.filter(r => visorModulo === 'unidades' ? r.modulo === 'unidades' : r.modulo !== 'unidades')
-    const reportesFiltrados = visorModulo === 'unidades'
-      ? (busquedaPlaca.trim() === ''
-          ? reportesDelModulo
-          : reportesDelModulo.filter(r => {
-              const q = busquedaPlaca.trim().toUpperCase()
-              return (r.tracto_placa || '').toUpperCase().includes(q) || (r.carreta_placa || '').toUpperCase().includes(q)
-            }))
-      : (filtroEstacion === 'Todas' ? reportesDelModulo : reportesDelModulo.filter(r => r.estacion_id === filtroEstacion))
-    const opcionesEstaciones = ['Todas', ...Array.from(new Set(reportesDelModulo.map(r => r.estacion_id)))]
-
     return (
-      <div className="mobile-view">
+      <div className="mobile-view mobile-view--wide">
         <header>
           <div className="header-content">
             <h1>Base de Conocimiento</h1>
             <p className="subtitle text-accent">Soluciones Previas</p>
           </div>
-          <div className="user-avatar" onClick={() => window.confirm('�Desea cerrar sesi�n?') && onLogout()}>{user.nombre.substring(0,2)}</div>
+          <div className="user-avatar" onClick={() => window.confirm('�Desea cerrar sesi�n?') && onLogout()}>{iniciales(user)}</div>
         </header>
         <main style={{padding: '1.5rem'}}>
-          
-          <div style={{display: 'flex', gap: '0.5rem', marginBottom: '1.5rem'}}>
-            {user.permisos.grifos && (
-              <button className={visorModulo === 'grifo' ? 'btn-primary' : 'btn-secondary'} onClick={() => setVisorModulo('grifo')} style={{flex: 1, padding: '0.5rem', fontSize: '0.9rem'}}>
-                Grifos
-              </button>
-            )}
-            {user.permisos.unidades && (
-              <button className={visorModulo === 'unidades' ? 'btn-primary' : 'btn-secondary'} onClick={() => setVisorModulo('unidades')} style={{flex: 1, padding: '0.5rem', fontSize: '0.9rem'}}>
-                Unidades
-              </button>
-            )}
-          </div>
-
-          {visorModulo === 'grifo' && (
-            <div style={{marginBottom: '1.5rem'}}>
-              <label style={{display: 'block', marginBottom: '0.5rem', color: '#94a3b8', fontSize: '0.9rem'}}>Filtrar por Estación</label>
-              <select value={filtroEstacion} onChange={e => setFiltroEstacion(e.target.value)} style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}}>
-                {opcionesEstaciones.map(est => <option key={est} value={est}>{est}</option>)}
-              </select>
-            </div>
-          )}
-
-          {visorModulo === 'unidades' && (
-            <div style={{marginBottom: '1.5rem'}}>
-              <label style={{display: 'block', marginBottom: '0.5rem', color: '#94a3b8', fontSize: '0.9rem'}}>Buscar por placa (Tracto o Carreta)</label>
-              <input
-                type="text"
-                value={busquedaPlaca}
-                onChange={e => setBusquedaPlaca(e.target.value)}
-                placeholder="Ej: ABC-123"
-                style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}}
-              />
-            </div>
-          )}
-
-          {reportesFiltrados.length === 0 ? (
-            <p className="text-muted text-center mt-4">No hay soluciones ni reportes registrados para esta selección.</p>
-          ) : (
-            <div style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
-              {reportesFiltrados.map(r => (
-                <div key={r.id} onClick={() => setReporteModal(r)} style={{background: '#1e293b', padding: '1.25rem', borderRadius: '8px', border: '1px solid #334155', cursor: 'pointer', transition: 'transform 0.2s'}} onMouseOver={e => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}>
-                  <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem', flexWrap: 'wrap', gap: '0.5rem'}}>
-                    <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap'}}>
-                      <span style={{fontWeight: 'bold', color: '#3b82f6', fontSize: '1.1rem'}}>{r.motivo}</span>
-                      <span style={{fontSize: '0.7rem', fontWeight: 'bold', color: colorDeEstado(r.estado), background: colorDeEstado(r.estado) + '22', padding: '0.15rem 0.6rem', borderRadius: '999px'}}>{r.estado || 'Pendiente'}</span>
-                    </div>
-                    <span style={{fontSize: '0.8rem', color: '#94a3b8'}}>{r.creado_en ? new Date(r.creado_en + (r.creado_en.endsWith('Z') ? '' : 'Z')).toLocaleString() : ''}</span>
-                  </div>
-                  {r.modulo === 'unidades' || r.estacion_id === 'UNIDADES' ? (
-                    <p style={{fontSize: '0.9rem', marginBottom: '0.5rem', color: '#cbd5e1'}}>
-                      {r.tracto_placa && <span style={{marginRight: '0.5rem'}}><strong>Tracto:</strong> {r.tracto_placa}</span>}
-                      {r.carreta_placa && <span><strong>Carreta:</strong> {r.carreta_placa}</span>}
-                    </p>
-                  ) : (
-                    <p style={{fontSize: '0.9rem', marginBottom: '0.5rem', color: '#cbd5e1'}}><strong>Estación:</strong> {r.estacion_id} | <strong>Equipo:</strong> {displayIslaLado(r.isla_lado)}</p>
-                  )}
-                  <p style={{color: '#e2e8f0', marginBottom: '0.75rem', padding: '0.5rem', background: 'rgba(0,0,0,0.2)', borderRadius: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{r.descripcion ? r.descripcion.replace(/\[📦 Repuesto utilizado: (.*?) x(\d+)\]$/, '').trim() : ''}</p>
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end'}}>
-                    <p style={{fontSize: '0.8rem', color: '#64748b', margin: 0}}>📸 {r.fotos && r.fotos !== 'Sin foto' ? r.fotos.split(',').length : 0} foto(s)</p>
-                    <p style={{fontSize: '0.85rem', color: '#10b981', margin: 0}}>Audit: <strong>{r.creado_por}</strong></p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          <button className="btn-secondary full-width mt-4" onClick={() => setModulo(null)}>Volver al Menú</button>
+          <VisorSoluciones
+            reportes={reportes}
+            user={user}
+            estacionesPermitidas={estaciones.map(e => e.nombre)}
+            displayIslaLado={displayIslaLado}
+            setReporteModal={setReporteModal}
+          />
+          <button className="btn-toggle full-width mt-4" onClick={() => setModulo(null)}>Volver al Menú</button>
         </main>
 
-        {/* Modal de Detalle de Reporte */}
-        {reporteModal && (
-          <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: '1rem'}}>
-            <div style={{background: '#0f172a', padding: '2rem', borderRadius: '12px', border: '1px solid #3b82f6', width: '100%', maxWidth: '600px', maxHeight: '90vh', overflowY: 'auto'}}>
-              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem'}}>
-                <div style={{display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap'}}>
-                  <h3 style={{color: '#3b82f6', margin: 0}}>{reporteModal.motivo}</h3>
-                  <span style={{fontSize: '0.75rem', fontWeight: 'bold', color: colorDeEstado(reporteModal.estado), background: colorDeEstado(reporteModal.estado) + '22', padding: '0.2rem 0.7rem', borderRadius: '999px'}}>{reporteModal.estado || 'Pendiente'}</span>
-                </div>
-                <button onClick={() => setReporteModal(null)} style={{background: 'transparent', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer', lineHeight: 1}}>×</button>
-              </div>
+        <ReporteDetalleModal
+          reporteModal={reporteModal}
+          setReporteModal={setReporteModal}
+          user={user}
+          setReportes={(updater) => {
+            setReportes(updater)
+            invalidateCache('operario_reportes')
+          }}
+          showAlert={showAlert}
+          openPreview={openPreview}
+          displayIslaLado={displayIslaLado}
+          onEditReport={(reporte) => { setReporteModal(null); setReportToEdit(reporte) }}
+        />
 
-              <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem'}}>
-                <div><small style={{color: '#94a3b8', display: 'block'}}>Fecha y Hora</small><strong>{reporteModal.creado_en ? new Date(reporteModal.creado_en + (reporteModal.creado_en.endsWith('Z') ? '' : 'Z')).toLocaleString() : ''}</strong></div>
-                <div><small style={{color: '#94a3b8', display: 'block'}}>Autor (Auditoría)</small><strong style={{color: '#10b981'}}>{reporteModal.creado_por}</strong></div>
-                {reporteModal.modulo === 'unidades' || reporteModal.estacion_id === 'UNIDADES' ? (
-                  <>
-                    {reporteModal.tracto_placa && <div><small style={{color: '#94a3b8', display: 'block'}}>Tracto</small><strong>{reporteModal.tracto_placa}</strong></div>}
-                    {reporteModal.carreta_placa && <div><small style={{color: '#94a3b8', display: 'block'}}>Carreta</small><strong>{reporteModal.carreta_placa}</strong></div>}
-                  </>
-                ) : (
-                  <>
-                    <div><small style={{color: '#94a3b8', display: 'block'}}>Estación</small><strong>{reporteModal.estacion_id}</strong></div>
-                    <div><small style={{color: '#94a3b8', display: 'block'}}>Equipo / Producto</small><strong>{displayIslaLado(reporteModal.isla_lado)} | {reporteModal.producto}</strong></div>
-                  </>
-                )}
-              </div>
-
-              <div style={{marginBottom: '1.5rem'}}>
-                <small style={{color: '#94a3b8', display: 'block', marginBottom: '0.5rem'}}>Descripción</small>
-                {(() => {
-                  const desc = reporteModal.descripcion || '';
-                  const match = desc.match(/\[📦 Repuesto utilizado: (.*?) x(\d+)\]$/);
-
-                  if (match) {
-                    const cleanDesc = desc.replace(match[0], '').trim();
-                    return (
-                      <>
-                        <div style={{background: '#1e293b', padding: '1rem', borderRadius: '8px', whiteSpace: 'pre-wrap', color: '#e2e8f0', marginBottom: '1.5rem'}}>
-                          {cleanDesc}
-                        </div>
-                        <small style={{color: '#94a3b8', display: 'block', marginBottom: '0.5rem'}}>Repuesto Utilizado (Del Inventario)</small>
-                        <div style={{display: 'inline-block', background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid #3b82f6'}}>
-                          📦 <strong>{match[1]}</strong> <span style={{background: '#3b82f6', color: 'white', padding: '2px 8px', borderRadius: '12px', fontSize: '0.9rem', marginLeft: '0.5rem'}}>Cantidad: {match[2]}</span>
-                        </div>
-                      </>
-                    );
-                  }
-
-                  return (
-                    <div style={{background: '#1e293b', padding: '1rem', borderRadius: '8px', whiteSpace: 'pre-wrap', color: '#e2e8f0'}}>
-                      {desc}
-                    </div>
-                  );
-                })()}
-              </div>
-
-              <div>
-                <small style={{color: '#94a3b8', display: 'block', marginBottom: '0.5rem'}}>Evidencias Fotográficas</small>
-                <div style={{background: '#1e293b', padding: '1rem', borderRadius: '8px', border: '1px dashed #334155', display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
-                  {reporteModal.fotos && reporteModal.fotos !== 'Sin foto' ? (() => {
-                    const lista = reporteModal.fotos.split(',')
-                    const galeria = lista.filter(f => f.startsWith('http'))
-                    return lista.map((f, i) => (
-                      f.startsWith('http') ?
-                        <div key={i} onClick={() => openPreview(galeria, f)} onContextMenu={(e) => e.preventDefault()} style={{cursor: 'pointer'}}>
-                          <img src={f} alt="Evidencia" loading="lazy" draggable={false} style={{height: '100px', borderRadius: '8px', border: '1px solid #475569', objectFit: 'cover', pointerEvents: 'none'}} />
-                        </div>
-                      : <span key={i} style={{color: '#cbd5e1'}}>{f}</span>
-                    ))
-                  })() : <span className="text-muted">No hay evidencias</span>}
-                </div>
-              </div>
-
-              <ReporteSeguimiento
-                reporte={reporteModal}
-                user={user}
-                showAlert={showAlert}
-                openPreview={openPreview}
-                onEstadoActualizado={(estado, resuelto_en) => {
-                  setReporteModal(prev => prev ? { ...prev, estado, resuelto_en } : prev)
-                  setReportes(prev => prev.map(r => r.id === reporteModal.id ? { ...r, estado, resuelto_en } : r))
-                  invalidateCache('operario_reportes')
-                }}
-              />
-            </div>
-          </div>
-        )}
-        
         {renderAppModal()}
         {renderPreviewLightbox()}
       </div>
@@ -968,132 +881,136 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
   }
 
   return (
-    <div className="mobile-view">
+    <div className="mobile-view mobile-view--form">
       <header>
         <div className="header-content">
           <h1>{modulo === 'grifo' ? 'Reporte de Grifo' : 'Reporte de Unidades'}</h1>
           <p className="subtitle">Llenado rápido</p>
         </div>
-        <div className="user-avatar" onClick={() => window.confirm('�Desea cerrar sesi�n?') && onLogout()}>{user.nombre.substring(0,2)}</div>
+        <div className="user-avatar" onClick={() => window.confirm('�Desea cerrar sesi�n?') && onLogout()}>{iniciales(user)}</div>
       </header>
       <main className="standard-form">
         <form onSubmit={handleSubmit}>
           
-          {modulo === 'grifo' ? (
-            <div className="grid-2">
-              <div className="form-group">
-                <label>Estación / Grifo</label>
-                <select value={estacionSeleccionada} onChange={e => setEstacionSeleccionada(e.target.value)} required>
-                  <option value="" disabled>Seleccione una opcion...</option>{estaciones.length === 0 && <option value="">Sin Estaciones</option>}
-                  {estaciones.map(est => (
-                    <option key={est.id} value={est.id}>{est.nombre}</option>
-                  ))}
-                </select>
-              </div>
-              
-              <div className="form-group">
-                <label>Surtidor / Lado</label>
-                <select value={ladoSeleccionado} onChange={e => setLadoSeleccionado(e.target.value)} required>
-                  <option value="" disabled>Seleccione un Surtidor/Lado...</option>{islasLados.length === 0 && <option value="">No hay lados configurados (si estás sin internet, entra aquí una vez con señal para guardarlos)</option>}
-                  {islasLados.map(il => (
-                    <option key={il.id} value={il.id}>Isla {il.isla} - Lado {il.lado}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          ) : (
-            <div className="form-group" style={{background: '#1e293b', padding: '1rem', borderRadius: '8px', border: '1px solid #334155'}}>
-              <label style={{display: 'block', marginBottom: '1rem', color: '#3b82f6'}}>Configuración de la Unidad</label>
-              
-              <div className="grid-2">
-                <div>
-                  <label>Placa del Tracto</label>
-                  <select value={tractoSeleccionado} onChange={e => setTractoSeleccionado(e.target.value)}>
-                    <option value="">(Ningún Tracto)</option>
-                    {unidadesTractos.map(t => <option key={t.id} value={t.placa}>{t.placa}</option>)}
-                  </select>
+          <div className="form-columns">
+            <div className="form-section">
+              <h3 className="form-section-title">{modulo === 'grifo' ? 'Datos del Grifo' : 'Configuración de la Unidad'}</h3>
+              {modulo === 'grifo' ? (
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label>Estación / Grifo</label>
+                    <select value={estacionSeleccionada} onChange={e => setEstacionSeleccionada(e.target.value)} required>
+                      <option value="" disabled>Seleccione una opcion...</option>{estaciones.length === 0 && <option value="">Sin Estaciones</option>}
+                      {estaciones.map(est => (
+                        <option key={est.id} value={est.id}>{est.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Surtidor / Lado</label>
+                    <select value={ladoSeleccionado} onChange={e => setLadoSeleccionado(e.target.value)} required>
+                      <option value="" disabled>Seleccione un Surtidor/Lado...</option>{islasLados.length === 0 && <option value="">No hay lados configurados (si estás sin internet, entra aquí una vez con señal para guardarlos)</option>}
+                      {islasLados.map(il => (
+                        <option key={il.id} value={il.id}>Isla {il.isla} - Lado {il.lado}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Producto Afectado (Automático)</label>
+                    <select value={productoAfectado} onChange={e => setProductoAfectado(e.target.value)}>
+                      <option value="" disabled>Seleccione un producto...</option>
+                      {productosDisponibles.map(prod => (
+                        <option key={prod} value={prod}>{prod}</option>
+                      ))}
+                      {productosDisponibles.length > 1 && <option value="Varios / Todos">Varios / Todos</option>}
+                    </select>
+                  </div>
                 </div>
-                
-                <div>
-                  <label>Placa de la Carreta</label>
-                  <select value={carretaSeleccionada} onChange={e => setCarretaSeleccionada(e.target.value)}>
-                    <option value="">(Ninguna Carreta)</option>
-                    {unidadesCarretas.map(c => <option key={c.id} value={c.placa}>{c.placa}</option>)}
-                  </select>
-                </div>
-              </div>
-              
-              {!tractoSeleccionado && !carretaSeleccionada && (
-                <p style={{color: '#ef4444', fontSize: '0.85rem', marginTop: '1rem'}}>⚠️ Debes seleccionar al menos un Tracto o una Carreta para continuar.</p>
+              ) : (
+                <>
+                  <div className="grid-2">
+                    <div className="form-group">
+                      <label>Placa del Tracto</label>
+                      <select value={tractoSeleccionado} onChange={e => setTractoSeleccionado(e.target.value)}>
+                        <option value="">(Ningún Tracto)</option>
+                        {unidadesTractos.map(t => <option key={t.id} value={t.placa}>{t.placa}</option>)}
+                      </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Placa de la Carreta</label>
+                      <select value={carretaSeleccionada} onChange={e => setCarretaSeleccionada(e.target.value)}>
+                        <option value="">(Ninguna Carreta)</option>
+                        {unidadesCarretas.map(c => <option key={c.id} value={c.placa}>{c.placa}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  {!tractoSeleccionado && !carretaSeleccionada && (
+                    <p style={{color: 'var(--danger)', fontSize: '0.85rem', marginTop: '1rem'}}>⚠️ Debes seleccionar al menos un Tracto o una Carreta para continuar.</p>
+                  )}
+                </>
               )}
             </div>
-          )}
-          
-          {modulo === 'grifo' && (
-            <div className="form-group">
-              <label>Producto Afectado (Automático)</label>
-              <select value={productoAfectado} onChange={e => setProductoAfectado(e.target.value)}>
-                <option value="" disabled>Seleccione un producto...</option>
-                {productosDisponibles.map(prod => (
-                  <option key={prod} value={prod}>{prod}</option>
-                ))}
-                {productosDisponibles.length > 1 && <option value="Varios / Todos">Varios / Todos</option>}
-              </select>
-            </div>
-          )}
 
-          <div className="grid-2">
-            <div className="form-group">
-              <label>Motivo de Intervención</label>
-              <select value={motivo} onChange={e => setMotivo(e.target.value)} required>
-                <option value="" disabled>Seleccione un motivo...</option>
-                {mantenimientoTipos.filter(mt => mt.modulo === (modulo || 'grifo')).length === 0 && <option value="">(Sin catálogo para este módulo)</option>}
-                {mantenimientoTipos.filter(mt => mt.modulo === (modulo || 'grifo')).map(mt => (
-                  <option key={mt.id} value={mt.nombre}>{mt.nombre}</option>
-                ))}
-              </select>
-            </div>
+            <div className="form-section">
+              <h3 className="form-section-title">Detalles del Reporte</h3>
+              <div className="form-grid">
+                <div className="form-group">
+                  <label>Motivo de Intervención</label>
+                  <select value={motivo} onChange={e => setMotivo(e.target.value)} required>
+                    <option value="" disabled>Seleccione un motivo...</option>
+                    {mantenimientoTipos.filter(mt => mt.modulo === (modulo || 'grifo')).length === 0 && <option value="">(Sin catálogo para este módulo)</option>}
+                    {mantenimientoTipos.filter(mt => mt.modulo === (modulo || 'grifo')).map(mt => (
+                      <option key={mt.id} value={mt.nombre}>{mt.nombre}</option>
+                    ))}
+                  </select>
+                </div>
 
-            <div className="form-group">
-              <label>Repuesto Utilizado (Del Inventario)</label>
-              <select value={repuestoUsado} onChange={e => setRepuestoUsado(e.target.value)}>
-                <option value="Ninguno">Ninguno / No requirió</option>
-                {inventario.filter(i => i.stock > 0 || i.id.toString() === repuestoUsado).map(inv => (
-                  <option key={inv.id} value={inv.id}>{inv.nombre} (Stock: {inv.stock})</option>
-                ))}
-              </select>
+                <div className="form-group">
+                  <label>Repuesto Utilizado (Del Inventario)</label>
+                  <select value={repuestoUsado} onChange={e => setRepuestoUsado(e.target.value)}>
+                    <option value="Ninguno">Ninguno / No requirió</option>
+                    {inventario.filter(i => i.stock > 0 || i.id.toString() === repuestoUsado).map(inv => (
+                      <option key={inv.id} value={inv.id}>{inv.nombre} (Stock: {inv.stock})</option>
+                    ))}
+                  </select>
+                </div>
+
+                {repuestoUsado !== 'Ninguno' && (
+                  <div className="form-group">
+                    <label>Cantidad Utilizada de {inventario.find(i => i.id === parseInt(repuestoUsado))?.nombre}</label>
+                    <input type="number" min="1" value={cantidadUsada} onChange={e => setCantidadUsada(parseInt(e.target.value))} required />
+                  </div>
+                )}
+
+                <div className="form-group">
+                  <label>Fecha y Hora del Suceso</label>
+                  <input type="datetime-local" value={fechaSuceso} onChange={e => setFechaSuceso(e.target.value)} required readOnly={!(user.permiso_config || user.rol === 'Gerencia')} style={{color: (user.permiso_config || user.rol === 'Gerencia') ? 'var(--text-main)' : 'var(--text-muted)', cursor: (user.permiso_config || user.rol === 'Gerencia') ? 'text' : 'not-allowed'}} />
+                </div>
+              </div>
             </div>
           </div>
 
-          {repuestoUsado !== 'Ninguno' && (
-            <div className="form-group">
-              <label>Cantidad Utilizada de {inventario.find(i => i.id === parseInt(repuestoUsado))?.nombre}</label>
-              <input type="number" min="1" value={cantidadUsada} onChange={e => setCantidadUsada(parseInt(e.target.value))} required style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}} />
-            </div>
-          )}
-
-          <div className="form-group">
-            <label>Fecha y Hora del Suceso</label>
-            <input type="datetime-local" value={fechaSuceso} onChange={e => setFechaSuceso(e.target.value)} required readOnly={!(user.permiso_config || user.rol === 'Gerencia')} style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: (user.permiso_config || user.rol === 'Gerencia') ? '#1e293b' : '#0f172a', color: (user.permiso_config || user.rol === 'Gerencia') ? 'white' : '#94a3b8', border: '1px solid #334155', cursor: (user.permiso_config || user.rol === 'Gerencia') ? 'text' : 'not-allowed'}} />
-          </div>
-
-          <div className="form-group">
-            <label>Evidencia Fotográfica (Obligatorio)</label>
-            <div style={{background: '#1e293b', padding: '1rem', borderRadius: '4px', border: '1px dashed #334155'}}>
+          <div className="form-section">
+            <h3 className="form-section-title">Evidencia Fotográfica (Obligatorio)</h3>
+            <div style={{background: 'var(--bg-elevated)', padding: '1rem', borderRadius: 'var(--radius-sm)', border: '1px dashed var(--border-soft)'}}>
               {existingFotos.length > 0 && (
                 <div style={{marginBottom: '1rem'}}>
-                  <label style={{display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#cbd5e1'}}>Fotos guardadas anteriormente:</label>
+                  <label style={{display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: 'var(--text-soft)'}}>Fotos guardadas anteriormente:</label>
                   <div style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
                     {existingFotos.map((url, i) => (
                       <div key={i} style={{position: 'relative', cursor: 'pointer'}} onClick={() => openPreview(existingFotos, url)} onContextMenu={(e) => e.preventDefault()}>
-                        <img src={url} alt="Evidencia previa" draggable={false} style={{height: '80px', borderRadius: '8px', border: '1px solid #475569', objectFit: 'cover', pointerEvents: 'none'}} />
-                        <button type="button" onClick={(e) => { e.stopPropagation(); setExistingFotos(existingFotos.filter((_, index) => index !== i)); }} style={{position: 'absolute', top: '-5px', right: '-5px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.7rem', fontWeight: 'bold'}}>×</button>
+                        <img src={url} alt="Evidencia previa" draggable={false} style={{height: '80px', borderRadius: 'var(--radius-md)', border: '1px solid var(--text-muted)', objectFit: 'cover', pointerEvents: 'none'}} />
+                        <button type="button" onClick={(e) => { e.stopPropagation(); setExistingFotos(existingFotos.filter((_, index) => index !== i)); }} style={{position: 'absolute', top: '-5px', right: '-5px', background: 'var(--danger)', color: 'white', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.7rem', fontWeight: 'bold'}}>×</button>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
-              <label style={{display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#94a3b8'}}>{existingFotos.length > 0 ? 'Agregar más fotos:' : 'Subir foto (Obligatorio):'}</label>
+              <label style={{display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: 'var(--text-muted)'}}>{existingFotos.length > 0 ? 'Agregar más fotos:' : 'Subir foto (Obligatorio):'}</label>
               
               <div style={{display: 'flex', gap: '0.5rem', marginBottom: '1rem'}}>
                 <button type="button" onClick={tomarFotoNativa} className="btn-primary" style={{flex: 1, padding: '0.75rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'}}>
@@ -1101,17 +1018,17 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
                 </button>
               </div>
               
-              <div style={{fontSize: '0.8rem', color: '#64748b', marginBottom: '0.5rem'}}>O subir desde archivos:</div>
+              <div style={{fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.5rem'}}>O subir desde archivos:</div>
               <input type="file" multiple accept="image/*" onChange={handleFileChange} required={existingFotos.length === 0 && fotos.length === 0} style={{color: 'white', width: '100%'}} />
               
               {fotos.length > 0 && (
                 <div style={{marginTop: '1rem'}}>
-                  <label style={{display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: '#10b981'}}>Nuevas fotos seleccionadas ({fotos.length}):</label>
+                  <label style={{display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: 'var(--accent)'}}>Nuevas fotos seleccionadas ({fotos.length}):</label>
                   <div style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
                     {fotos.map((fotoObj, i) => (
                       <div key={i} style={{position: 'relative', cursor: 'pointer'}} onClick={() => openPreview(fotos.map(fo => fo.preview), fotoObj.preview)} onContextMenu={(e) => e.preventDefault()}>
-                        <img src={fotoObj.preview} alt="Preview" draggable={false} style={{height: '80px', borderRadius: '8px', border: '1px solid #10b981', objectFit: 'cover', pointerEvents: 'none'}} />
-                        <button type="button" onClick={(e) => { e.stopPropagation(); removeFoto(i); }} style={{position: 'absolute', top: '-5px', right: '-5px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.7rem', fontWeight: 'bold'}}>×</button>
+                        <img src={fotoObj.preview} alt="Preview" draggable={false} style={{height: '80px', borderRadius: 'var(--radius-md)', border: '1px solid var(--accent)', objectFit: 'cover', pointerEvents: 'none'}} />
+                        <button type="button" onClick={(e) => { e.stopPropagation(); removeFoto(i); }} style={{position: 'absolute', top: '-5px', right: '-5px', background: 'var(--danger)', color: 'white', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.7rem', fontWeight: 'bold'}}>×</button>
                       </div>
                     ))}
                   </div>
@@ -1135,16 +1052,16 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
                     type="button"
                     onClick={() => setEstadoInicial(e)}
                     style={{
-                      flex: '1 1 100px', padding: '0.6rem', borderRadius: '6px', cursor: 'pointer',
+                      flex: '1 1 100px', padding: '0.6rem', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                       border: `1px solid ${colorDeEstado(e)}`,
                       background: estadoInicial === e ? colorDeEstado(e) : 'transparent',
-                      color: estadoInicial === e ? '#0f172a' : colorDeEstado(e),
+                      color: estadoInicial === e ? 'var(--card-bg)' : colorDeEstado(e),
                       fontWeight: 'bold', fontSize: '0.85rem'
                     }}
                   >{e}</button>
                 ))}
               </div>
-              <small style={{color: '#64748b', display: 'block', marginTop: '0.4rem'}}>Si ya lo resolviste en el momento, márcalo directamente como Resuelto.</small>
+              <small style={{color: 'var(--text-muted)', display: 'block', marginTop: '0.4rem'}}>Si ya lo resolviste en el momento, márcalo directamente como Resuelto.</small>
             </div>
           )}
 
@@ -1152,7 +1069,7 @@ export default function Operario({ onLogout, user, onSwitchView, reportToEdit, s
             <button type="submit" className="btn-primary full-width" style={{padding: '1rem', fontSize: '1.1rem'}} disabled={isSubmitting}>
               {isSubmitting ? 'Guardando reporte...' : (editingReportId ? 'Actualizar Reporte' : 'Confirmar y Guardar')}
             </button>
-            <button type="button" className="btn-secondary" style={{width: '100%', padding: '1rem', fontSize: '1.1rem'}} onClick={() => { setModulo(null); setEditingReportId(null); }}>Cancelar</button>
+            <button type="button" className="btn-toggle" style={{width: '100%', padding: '1rem', fontSize: '1.1rem'}} onClick={() => { setModulo(null); setEditingReportId(null); }}>Cancelar</button>
           </div>
         </form>
       </main>

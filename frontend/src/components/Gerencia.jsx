@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import { useBackHandler } from '../utils/backButton'
-import { colorDeEstado, diasTranscurridos } from '../utils/estado'
-import { generarCodigoUsuario } from '../utils/usuario'
-import ReporteSeguimiento from './ReporteSeguimiento'
+import { diasTranscurridos } from '../utils/estado'
+import { generarCodigoUsuario, iniciales, puedeVerReporte } from '../utils/usuario'
 import MantenimientoSistema from './MantenimientoSistema'
 import ZoomableImage from './ZoomableImage'
+import VisorSoluciones from './VisorSoluciones'
+import ReporteDetalleModal from './ReporteDetalleModal'
 import { descargarImagen } from '../utils/download'
+import { ChartIcon, BookIcon, PackageIcon, UsersIcon, WrenchIcon, GearIcon, PulseIcon, SmartphoneIcon, XIcon, DoorIcon, MenuIcon } from '../utils/icons'
+import { actualizarBadge } from '../utils/push'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -39,13 +42,47 @@ ChartJS.register(
   ChartDataLabels
 )
 
-export default function Gerencia({ onLogout, user, onSwitchView, onEditReport }) {
+export default function Gerencia({ onLogout, user, onSwitchView, onEditReport, pendingReportId, onPendingReportHandled }) {
   const [tab, setTab] = useState(() => localStorage.getItem('gerencia_tab') || 'dashboard')
 
   useEffect(() => {
     localStorage.setItem('gerencia_tab', tab)
   }, [tab])
-  
+
+  // Guarda de acceso: la pestaña guardada en localStorage es del dispositivo,
+  // no del usuario — si alguien con menos permisos entra en un dispositivo
+  // que había quedado en una pestaña restringida (o cambian sus permisos en
+  // vivo), esto lo saca de ahí. El botón del menú ya estaba oculto, pero el
+  // contenido de la pestaña se seguía renderizando igual si `tab` apuntaba
+  // ahí por cualquier otro motivo.
+  useEffect(() => {
+    // Si no le queda ningún permiso de nivel Gerencia, este panel no le
+    // sirve de nada — y si además tampoco puede crear reportes (Modo
+    // Operario también oculto), se queda completamente atrapado sin
+    // ninguna pestaña ni botón visible. Se lo saca directo al modo Operario.
+    const tieneAlgunPermisoGerencia = user.permisos.dashboard || user.permisos.soluciones || user.permisos.inventario || user.permisos.config
+    if (!tieneAlgunPermisoGerencia) {
+      onSwitchView && onSwitchView()
+      return
+    }
+    const permisoDeTab = {
+      dashboard: user.permisos.dashboard,
+      soluciones: user.permisos.soluciones,
+      inventario: user.permisos.inventario,
+      usuarios: user.permisos.config,
+      mantenimiento: user.permisos.config,
+      config: user.permisos.config,
+      sistema: user.permisos.config,
+    }
+    if (permisoDeTab[tab] === false) {
+      const fallback = user.permisos.dashboard ? 'dashboard'
+        : user.permisos.soluciones ? 'soluciones'
+        : user.permisos.inventario ? 'inventario'
+        : 'usuarios'
+      setTab(fallback)
+    }
+  }, [tab, user.permisos.dashboard, user.permisos.soluciones, user.permisos.inventario, user.permisos.config])
+
   // Estados Reales desde Supabase
   const [usuarios, setUsuarios] = useState([])
   const [estaciones, setEstaciones] = useState([])
@@ -67,23 +104,44 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
   
   const [reportes, setReportes] = useState([])
   const [filtroEstacion, setFiltroEstacion] = useState('Todas')
+
+  // Numerito del ícono de la app (como WhatsApp): refleja los reportes
+  // pendientes cada vez que la lista se actualiza — solo cuenta los que
+  // este usuario realmente puede ver (misma regla que usa el servidor al
+  // mandar la notificación), no el total de la empresa.
+  useEffect(() => {
+    actualizarBadge(reportes.filter(r => (r.estado || 'Pendiente') !== 'Resuelto' && puedeVerReporte(user, r)).length)
+  }, [reportes, user])
+
+  // Notificación push tocada: abre ese reporte directo, sin que el
+  // usuario tenga que buscarlo.
+  useEffect(() => {
+    if (!pendingReportId) return
+    if (tab !== 'soluciones' && tab !== 'dashboard') { setTab('soluciones'); return }
+    const encontrado = reportes.find(r => r.id === pendingReportId)
+    if (encontrado) {
+      // Una notificación vieja o de otro dispositivo podría apuntar a un
+      // reporte que ya no le corresponde ver a este usuario (o nunca le
+      // correspondió) — no se abre si no tiene permiso.
+      if (puedeVerReporte(user, encontrado)) setReporteModal(encontrado)
+      onPendingReportHandled && onPendingReportHandled()
+    }
+  }, [pendingReportId, reportes, tab])
   const [invModulo, setInvModulo] = useState('grifo')
   
   // Dashboard Filters
   const [dashModulo, setDashModulo] = useState('grifo')
   const [mantModulo, setMantModulo] = useState('grifo')
   const [configModulo, setConfigModulo] = useState('grifo')
-  const [visorModulo, setVisorModulo] = useState('grifo')
   const [isTractosExpanded, setIsTractosExpanded] = useState(true)
   const [isCarretasExpanded, setIsCarretasExpanded] = useState(true)
   const [dashFiltroEstaciones, setDashFiltroEstaciones] = useState([])
   const [dashFiltroProducto, setDashFiltroProducto] = useState('Todos')
   const [dashFiltroFecha, setDashFiltroFecha] = useState({ inicio: '', fin: '' })
   const [dashFiltroRepuesto, setDashFiltroRepuesto] = useState('Todos')
-  const [visorBusquedaPlaca, setVisorBusquedaPlaca] = useState('')
 
   const estacionesPermitidas = user.estaciones === 'Todas' ? estaciones.map(e => e.nombre) : user.estaciones.split(',').map(s=>s.trim()).filter(Boolean)
-  
+
   const toggleEstacionFiltro = (estNombre) => {
     if (dashFiltroEstaciones.includes(estNombre)) {
       setDashFiltroEstaciones(dashFiltroEstaciones.filter(e => e !== estNombre))
@@ -198,7 +256,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
     if (data) {
       if (user.estaciones !== 'Todas') {
         const permitidas = user.estaciones.split(',').map(s => s.trim())
-        setReportes(data.filter(r => permitidas.includes(r.estacion_id)))
+        setReportes(data.filter(r => permitidas.includes(r.estacion_id) || ((user.permisos.unidades || user.permisos.verUnidades) && r.modulo === 'unidades')))
       } else {
         setReportes(data)
       }
@@ -334,7 +392,9 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
       permiso_soluciones: editingUser.permiso_soluciones,
       permiso_editar_reportes: editingUser.permiso_editar_reportes,
       permiso_grifos: editingUser.permiso_grifos,
-      permiso_unidades: editingUser.permiso_unidades
+      permiso_unidades: editingUser.permiso_unidades,
+      permiso_ver_grifos: editingUser.permiso_ver_grifos,
+      permiso_ver_unidades: editingUser.permiso_ver_unidades
     }
     // Solo se toca la contraseña si se escribió una nueva; se guarda en texto
     // plano acá pero la base de datos la hashea sola con un trigger antes de
@@ -348,6 +408,10 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
     if (error) {
       showAlert('Error', 'Error guardando permisos: ' + error.message)
     } else {
+      // Actualiza la lista local de una vez (sin esperar a la suscripción en
+      // tiempo real), para que si el admin vuelve a abrir "Configurar
+      // Permisos" del mismo usuario, no vea los datos viejos.
+      setUsuarios(prev => prev.map(u => u.id === editingUser.id ? { ...u, ...payload } : u))
       showAlert('Éxito', nuevaPasswordEdit.trim() ? `Información y contraseña actualizadas para ${editingUser.nombre}` : `Información actualizada para ${editingUser.nombre}`)
       setEditingUser(null)
       setNuevaPasswordEdit('')
@@ -477,41 +541,45 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
       <aside className={`sidebar ${isMobileMenuOpen ? 'open' : ''} ${isSidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
           {!isSidebarCollapsed && <h2>Administración del Sistema</h2>}
-          <button className="mobile-menu-btn" onClick={() => setIsMobileMenuOpen(false)}>✕</button>
+          <button className="mobile-menu-btn" onClick={() => setIsMobileMenuOpen(false)}><XIcon size={20} /></button>
         </div>
         <nav>
-          {user.permisos.dashboard && <button className={tab === 'dashboard' ? 'active' : ''} onClick={() => { setTab('dashboard'); setIsMobileMenuOpen(false) }}>📊 {!isSidebarCollapsed && 'Dashboard KPI'}</button>}
+          {user.permisos.dashboard && <button className={tab === 'dashboard' ? 'active' : ''} onClick={() => { setTab('dashboard'); setIsMobileMenuOpen(false) }}><ChartIcon /> {!isSidebarCollapsed && 'Dashboard KPI'}</button>}
           {user.permisos.soluciones && (() => {
             const pendientesCount = reportes.filter(r => (r.estado || 'Pendiente') !== 'Resuelto').length
             return (
               <button className={tab === 'soluciones' ? 'active' : ''} onClick={() => { setTab('soluciones'); setIsMobileMenuOpen(false) }} style={{display: 'flex', alignItems: 'center', justifyContent: isSidebarCollapsed ? 'center' : 'space-between'}}>
-                <span>📚 {!isSidebarCollapsed && 'Visor de Soluciones'}</span>
+                <span style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}><BookIcon /> {!isSidebarCollapsed && 'Visor de Soluciones'}</span>
                 {pendientesCount > 0 && (
-                  <span title={`${pendientesCount} reporte(s) sin resolver`} style={{background: '#ef4444', color: 'white', fontSize: '0.7rem', fontWeight: 'bold', borderRadius: '999px', padding: isSidebarCollapsed ? '0' : '0.1rem 0.5rem', minWidth: isSidebarCollapsed ? '0' : '1.4rem', textAlign: 'center'}}>
+                  <span title={`${pendientesCount} reporte(s) sin resolver`} style={{background: 'var(--danger)', color: 'white', fontSize: '0.7rem', fontWeight: 'bold', borderRadius: '999px', padding: isSidebarCollapsed ? '0' : '0.1rem 0.5rem', minWidth: isSidebarCollapsed ? '0' : '1.4rem', textAlign: 'center'}}>
                     {isSidebarCollapsed ? '' : pendientesCount}
                   </span>
                 )}
               </button>
             )
           })()}
-          {user.permisos.inventario && <button className={tab === 'inventario' ? 'active' : ''} onClick={() => { setTab('inventario'); setIsMobileMenuOpen(false) }}>📦 {!isSidebarCollapsed && 'Inventario Estaciones'}</button>}
-          {user.permisos.config && <button className={tab === 'usuarios' ? 'active' : ''} onClick={() => { setTab('usuarios'); setIsMobileMenuOpen(false) }}>👥 {!isSidebarCollapsed && 'Accesos (ABAC)'}</button>}
-          {user.permisos.config && <button className={tab === 'mantenimiento' ? 'active' : ''} onClick={() => { setTab('mantenimiento'); setIsMobileMenuOpen(false) }}>🛠️ {!isSidebarCollapsed && 'Catálogo de Mantenimiento'}</button>}
-          {user.permisos.config && <button className={tab === 'config' ? 'active' : ''} onClick={() => { setTab('config'); setIsMobileMenuOpen(false) }}>⚙️ {!isSidebarCollapsed && 'Configuración Estaciones'}</button>}
-          {user.permisos.config && <button className={tab === 'sistema' ? 'active' : ''} onClick={() => { setTab('sistema'); setIsMobileMenuOpen(false) }}>🩺 {!isSidebarCollapsed && 'Mantenimiento del Sistema'}</button>}
-          
-          <div style={{borderTop: '1px solid rgba(255,255,255,0.1)', margin: '1rem 0'}}></div>
-          <button onClick={onSwitchView} style={{background: '#1e293b', border: '1px solid #3b82f6'}}>📱 {!isSidebarCollapsed && 'Modo Operario'}</button>
-          
+          {user.permisos.inventario && <button className={tab === 'inventario' ? 'active' : ''} onClick={() => { setTab('inventario'); setIsMobileMenuOpen(false) }}><PackageIcon /> {!isSidebarCollapsed && 'Inventario Estaciones'}</button>}
+          {user.permisos.config && <button className={tab === 'usuarios' ? 'active' : ''} onClick={() => { setTab('usuarios'); setIsMobileMenuOpen(false) }}><UsersIcon /> {!isSidebarCollapsed && 'Accesos (ABAC)'}</button>}
+          {user.permisos.config && <button className={tab === 'mantenimiento' ? 'active' : ''} onClick={() => { setTab('mantenimiento'); setIsMobileMenuOpen(false) }}><WrenchIcon /> {!isSidebarCollapsed && 'Catálogo de Mantenimiento'}</button>}
+          {user.permisos.config && <button className={tab === 'config' ? 'active' : ''} onClick={() => { setTab('config'); setIsMobileMenuOpen(false) }}><GearIcon /> {!isSidebarCollapsed && 'Configuración Estaciones'}</button>}
+          {user.permisos.config && <button className={tab === 'sistema' ? 'active' : ''} onClick={() => { setTab('sistema'); setIsMobileMenuOpen(false) }}><PulseIcon /> {!isSidebarCollapsed && 'Mantenimiento del Sistema'}</button>}
+
+          {(user.permisos.grifos || user.permisos.unidades) && (
+            <>
+              <div style={{borderTop: '1px solid rgba(255,255,255,0.1)', margin: '1rem 0'}}></div>
+              <button onClick={onSwitchView} style={{background: 'var(--bg-elevated)', border: '1px solid var(--border-soft)'}}><SmartphoneIcon /> {!isSidebarCollapsed && 'Modo Operario'}</button>
+            </>
+          )}
+
         </nav>
-        <button className="btn-text" style={{marginTop: 'auto'}} onClick={() => window.confirm('�Desea cerrar sesi�n?') && onLogout()}>{!isSidebarCollapsed ? 'Cerrar Sesión' : '🚪'}</button>
+        <button className="btn-text" style={{marginTop: 'auto'}} onClick={() => window.confirm('�Desea cerrar sesi�n?') && onLogout()}>{!isSidebarCollapsed ? 'Cerrar Sesión' : <DoorIcon size={18} />}</button>
       </aside>
 
       <main className="dashboard-main">
         <header className="desktop-header">
           <div style={{display: 'flex', alignItems: 'center', gap: '1rem'}}>
-            <button className="mobile-menu-btn" onClick={() => setIsMobileMenuOpen(true)}>☰</button>
-            <button style={{background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: '1.2rem', display: 'flex', alignItems: 'center', padding: '0.5rem'}} onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} title="Colapsar Menú" className="desktop-collapse-btn">☰</button>
+            <button className="mobile-menu-btn" onClick={() => setIsMobileMenuOpen(true)}><MenuIcon size={22} /></button>
+            <button style={{background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '0.5rem'}} onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} title="Colapsar Menú" className="desktop-collapse-btn"><MenuIcon size={20} /></button>
             <h1 id="gerencia-title">
               {tab === 'dashboard' && 'Dashboard Operativo'}
               {tab === 'soluciones' && 'Visor de Soluciones'}
@@ -520,7 +588,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
               {tab === 'config' && 'Configuración de Estaciones'}
             </h1>
           </div>
-          <div className="user-avatar">{user.nombre.substring(0,2)}</div>
+          <div className="user-avatar">{iniciales(user)}</div>
         </header>
         
         <div className="dashboard-content">
@@ -671,7 +739,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
               // BI: Matriz Repuestos vs Producto
               const top5RepuestosList = Object.entries(repuestosCount).sort((a,b)=>b[1]-a[1]).slice(0,5).map(e=>e[0])
               const repMatrixLabels = productosUnicos.filter(p => p !== 'Todos')
-              const repMatrixColors = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6']
+              const repMatrixColors = ['var(--accent)', 'var(--primary)', 'var(--warning)', 'var(--danger)', 'var(--insight)']
               
               const repMatrixDatasets = repMatrixLabels.map((prod, i) => ({
                 label: prod,
@@ -690,7 +758,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
               let drillDownAxis = [];
               let stackedDatasets = [];
               const stackLabels = dashModulo === 'unidades' ? [...new Set(reportesFiltrados.map(r => r.motivo))] : productosUnicos.filter(p => p !== 'Todos');
-              const stackColors = ['#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+              const stackColors = ['var(--danger)', 'var(--warning)', 'var(--primary)', 'var(--accent)', 'var(--insight)', '#ec4899', '#14b8a6', '#f97316'];
 
               if (dashModulo === 'unidades') {
                 const uniqueUnidades = [...new Set(reportesFiltrados.map(r => r.tracto_placa || r.carreta_placa || 'Desconocido'))].filter(Boolean);
@@ -790,49 +858,49 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                   <style>
                     {`
                       @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-                      .premium-card { background: linear-gradient(145deg, #0f172a, #1e293b); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 12px; padding: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.2s; }
+                      .premium-card { background: linear-gradient(145deg, var(--card-bg), var(--bg-elevated)); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 12px; padding: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.2s; }
                       .premium-card:hover { transform: translateY(-3px); box-shadow: 0 8px 12px rgba(59, 130, 246, 0.15); }
-                      .filter-select { padding: 0.6rem; border-radius: 8px; background: rgba(30, 41, 59, 0.8); color: white; border: 1px solid #334155; font-size: 0.9rem; outline: none; transition: border 0.3s; }
-                      .filter-select:focus { border-color: #3b82f6; }
+                      .filter-select { padding: 0.6rem; border-radius: 8px; background: rgba(30, 41, 59, 0.8); color: white; border: 1px solid var(--border-soft); font-size: 0.9rem; outline: none; transition: border 0.3s; }
+                      .filter-select:focus { border-color: var(--primary); }
                     `}
                   </style>
 
                   {/* Panel de Filtros Interactivos Toolbar */}
-                  <div style={{display: 'flex', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem'}}>
-                    <button className={dashModulo === 'grifo' ? 'btn-primary' : 'btn-secondary'} onClick={() => setDashModulo('grifo')} style={{flex: 1}}>
+                  <div style={{display: 'flex', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem', flexWrap: 'wrap'}}>
+                    <button className={dashModulo === 'grifo' ? 'btn-primary' : 'btn-toggle'} onClick={() => setDashModulo('grifo')} style={{flex: 1, minWidth: '140px'}}>
                       Dashboard Grifos
                     </button>
-                    <button className={dashModulo === 'unidades' ? 'btn-primary' : 'btn-secondary'} onClick={() => setDashModulo('unidades')} style={{flex: 1}}>
+                    <button className={dashModulo === 'unidades' ? 'btn-primary' : 'btn-toggle'} onClick={() => setDashModulo('unidades')} style={{flex: 1, minWidth: '140px'}}>
                       Dashboard Unidades
                     </button>
                   </div>
 
                   <div className="premium-card" style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
                     <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem'}}>
-                      <h3 style={{margin: 0, color: '#60a5fa', display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+                      <h3 style={{margin: 0, color: 'var(--primary-light)', display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
                         <span style={{fontSize: '1.2rem'}}>🎛️</span> BI Filters (En Cascada)
                       </h3>
                       
                       <div style={{display: 'flex', flexWrap: 'wrap', gap: '1rem'}}>
                         <div style={{display: 'flex', flexDirection: 'column', gap: '0.3rem'}}>
-                          <span style={{color: '#94a3b8', fontSize: '0.8rem'}}>Rango de Fechas:</span>
+                          <span style={{color: 'var(--text-muted)', fontSize: '0.8rem'}}>Rango de Fechas:</span>
                           <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
                             <input type="date" className="filter-select" value={dashFiltroFecha.inicio} onChange={e => setDashFiltroFecha({...dashFiltroFecha, inicio: e.target.value})} style={{padding: '0.4rem', fontSize: '0.8rem'}} />
-                            <span style={{color: '#94a3b8'}}>-</span>
+                            <span style={{color: 'var(--text-muted)'}}>-</span>
                             <input type="date" className="filter-select" value={dashFiltroFecha.fin} onChange={e => setDashFiltroFecha({...dashFiltroFecha, fin: e.target.value})} style={{padding: '0.4rem', fontSize: '0.8rem'}} />
                             {(dashFiltroFecha.inicio || dashFiltroFecha.fin) && (
-                              <button onClick={() => setDashFiltroFecha({inicio: '', fin: ''})} className="btn-text" style={{padding: '0', marginLeft: '0.2rem', color: '#ef4444'}}>x</button>
+                              <button onClick={() => setDashFiltroFecha({inicio: '', fin: ''})} className="btn-text" style={{padding: '0', marginLeft: '0.2rem', color: 'var(--danger)'}}>x</button>
                             )}
                           </div>
                         </div>
                         <div style={{display: 'flex', flexDirection: 'column', gap: '0.3rem'}}>
-                          <span style={{color: '#94a3b8', fontSize: '0.8rem'}}>Producto:</span>
+                          <span style={{color: 'var(--text-muted)', fontSize: '0.8rem'}}>Producto:</span>
                           <select className="filter-select" value={dashFiltroProducto} onChange={e => setDashFiltroProducto(e.target.value)}>
                             {productosUnicos.map(p => <option key={p} value={p}>{p}</option>)}
                           </select>
                         </div>
                         <div style={{display: 'flex', flexDirection: 'column', gap: '0.3rem'}}>
-                          <span style={{color: '#94a3b8', fontSize: '0.8rem'}}>Repuesto Involucrado:</span>
+                          <span style={{color: 'var(--text-muted)', fontSize: '0.8rem'}}>Repuesto Involucrado:</span>
                           <select className="filter-select" value={dashFiltroRepuesto} onChange={e => setDashFiltroRepuesto(e.target.value)}>
                             {repuestosUnicos.map(p => <option key={p} value={p}>{p}</option>)}
                           </select>
@@ -842,17 +910,17 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                     
                     {dashModulo === 'grifo' && (
                       <div style={{borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1rem'}}>
-                        <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '0.8rem'}}>Estaciones Analizadas (Afecta opciones de Producto y Repuesto):</p>
+                        <p style={{color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '0.8rem'}}>Estaciones Analizadas (Afecta opciones de Producto y Repuesto):</p>
                         <div style={{display: 'flex', flexWrap: 'wrap', gap: '0.5rem'}}>
                           {estacionesPermitidas.map(est => (
-                            <label key={est} style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', background: dashFiltroEstaciones.includes(est) ? 'linear-gradient(to right, #1e3a8a, #2563eb)' : 'rgba(30,41,59,0.5)', padding: '0.4rem 1rem', borderRadius: '20px', border: dashFiltroEstaciones.includes(est) ? '1px solid #60a5fa' : '1px solid #334155', transition: 'all 0.3s', fontSize: '0.9rem', boxShadow: dashFiltroEstaciones.includes(est) ? '0 0 10px rgba(59,130,246,0.3)' : 'none'}}>
+                            <label key={est} style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', background: dashFiltroEstaciones.includes(est) ? 'linear-gradient(to right, var(--primary-hover), var(--primary-hover))' : 'rgba(30,41,59,0.5)', padding: '0.4rem 1rem', borderRadius: '20px', border: dashFiltroEstaciones.includes(est) ? '1px solid var(--primary-light)' : '1px solid var(--border-soft)', transition: 'all 0.3s', fontSize: '0.9rem', boxShadow: dashFiltroEstaciones.includes(est) ? '0 0 10px rgba(59,130,246,0.3)' : 'none'}}>
                               <input type="checkbox" checked={dashFiltroEstaciones.includes(est)} onChange={() => toggleEstacionFiltro(est)} style={{display: 'none'}} />
-                              <span style={{color: dashFiltroEstaciones.includes(est) ? 'white' : '#cbd5e1'}}>{est}</span>
+                              <span style={{color: dashFiltroEstaciones.includes(est) ? 'white' : 'var(--text-soft)'}}>{est}</span>
                             </label>
                           ))}
                         </div>
                         {dashModulo === 'grifo' && dashFiltroEstaciones.length > 0 && (
-                          <button className="btn-text" style={{marginTop: '1rem', padding: '0', color: '#ef4444', fontSize: '0.85rem'}} onClick={() => setDashFiltroEstaciones([])}>Desmarcar todas (Mostrar {estacionesPermitidas.length})</button>
+                          <button className="btn-text" style={{marginTop: '1rem', padding: '0', color: 'var(--danger)', fontSize: '0.85rem'}} onClick={() => setDashFiltroEstaciones([])}>Desmarcar todas (Mostrar {estacionesPermitidas.length})</button>
                         )}
                       </div>
                     )}
@@ -860,29 +928,29 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
 
                   {/* KPIs Superiores */}
                   <div className="metrics-grid">
-                    <div className="metric-card premium-card" style={{borderLeft: '4px solid #3b82f6'}}>
-                      <h3 style={{color: '#94a3b8', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px'}}>Frecuencia (MTBF)</h3>
-                      <div className="value" style={{color: '#60a5fa', fontSize: '2rem', fontWeight: 'bold'}}>{mtbf} <span style={{fontSize: '1rem'}}>días</span></div>
-                      <span style={{fontSize: '0.8rem', color: '#cbd5e1'}}>Tiempo Medio Entre Fallas</span>
+                    <div className="metric-card premium-card" style={{borderLeft: '4px solid var(--primary)'}}>
+                      <h3 style={{color: 'var(--text-muted)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px'}}>Frecuencia (MTBF)</h3>
+                      <div className="value" style={{color: 'var(--primary-light)', fontSize: '2rem', fontWeight: 'bold'}}>{mtbf} <span style={{fontSize: '1rem'}}>días</span></div>
+                      <span style={{fontSize: '0.8rem', color: 'var(--text-soft)'}}>Tiempo Medio Entre Fallas</span>
                     </div>
-                    <div className="metric-card premium-card" style={{borderLeft: '4px solid #10b981'}}>
-                      <h3 style={{color: '#94a3b8', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px'}}>Top Repuesto (Gasto)</h3>
-                      <div className="value" style={{color: '#34d399', fontSize: '1.2rem', marginTop: '0.5rem', fontWeight: 'bold'}}>{topRepuesto?.[0] || 'N/A'}</div>
-                      <span style={{fontSize: '0.8rem', color: '#cbd5e1'}}>{topRepuesto?.[1] || 0} unidades consumidas</span>
+                    <div className="metric-card premium-card" style={{borderLeft: '4px solid var(--accent)'}}>
+                      <h3 style={{color: 'var(--text-muted)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px'}}>Top Repuesto (Gasto)</h3>
+                      <div className="value" style={{color: 'var(--accent-light)', fontSize: '1.2rem', marginTop: '0.5rem', fontWeight: 'bold'}}>{topRepuesto?.[0] || 'N/A'}</div>
+                      <span style={{fontSize: '0.8rem', color: 'var(--text-soft)'}}>{topRepuesto?.[1] || 0} unidades consumidas</span>
                     </div>
-                    <div className="metric-card premium-card" style={{borderLeft: '4px solid #ef4444'}}>
-                      <h3 style={{color: '#94a3b8', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px'}}>{dashModulo === 'unidades' ? 'Unidad Crítica' : 'Estación Crítica'}</h3>
-                      <div className="value" style={{fontSize: '1.2rem', marginTop: '0.5rem', color: '#fca5a5', fontWeight: 'bold'}}>
+                    <div className="metric-card premium-card" style={{borderLeft: '4px solid var(--danger)'}}>
+                      <h3 style={{color: 'var(--text-muted)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px'}}>{dashModulo === 'unidades' ? 'Unidad Crítica' : 'Estación Crítica'}</h3>
+                      <div className="value" style={{fontSize: '1.2rem', marginTop: '0.5rem', color: 'var(--danger-light)', fontWeight: 'bold'}}>
                         {topRiesgo?.[0] || 'N/A'}
                       </div>
-                      <span style={{fontSize: '0.8rem', color: '#cbd5e1'}}>{topRiesgo?.[1] || 0} reportes</span>
+                      <span style={{fontSize: '0.8rem', color: 'var(--text-soft)'}}>{topRiesgo?.[1] || 0} reportes</span>
                     </div>
-                    <div className="metric-card premium-card" style={{borderLeft: '4px solid #8b5cf6'}}>
-                      <h3 style={{color: '#94a3b8', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px'}}>Proyección IA</h3>
-                      <div className="value" style={{fontSize: '0.9rem', marginTop: '0.5rem', color: '#c4b5fd', whiteSpace: 'normal', overflow: 'visible', lineHeight: '1.4', fontWeight: 'bold'}}>
+                    <div className="metric-card premium-card" style={{borderLeft: '4px solid var(--insight)'}}>
+                      <h3 style={{color: 'var(--text-muted)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px'}}>Proyección IA</h3>
+                      <div className="value" style={{fontSize: '0.9rem', marginTop: '0.5rem', color: 'var(--insight-light)', whiteSpace: 'normal', overflow: 'visible', lineHeight: '1.4', fontWeight: 'bold'}}>
                         {predictionText}
                       </div>
-                      <span style={{fontSize: '0.8rem', color: '#cbd5e1', display: 'block', marginTop: '0.5rem'}}>Regresión Lineal a 7 días</span>
+                      <span style={{fontSize: '0.8rem', color: 'var(--text-soft)', display: 'block', marginTop: '0.5rem'}}>Regresión Lineal a 7 días</span>
                     </div>
                     {(() => {
                       const resueltos = reportesFiltrados.filter(r => r.estado === 'Resuelto' && r.resuelto_en)
@@ -890,12 +958,12 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                         ? (resueltos.reduce((sum, r) => sum + diasTranscurridos(r.creado_en, r.resuelto_en), 0) / resueltos.length).toFixed(1)
                         : null
                       return (
-                        <div className="metric-card premium-card" style={{borderLeft: '4px solid #22d3ee'}}>
-                          <h3 style={{color: '#94a3b8', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px'}}>Eficiencia de Resolución</h3>
-                          <div className="value" style={{color: '#22d3ee', fontSize: '2rem', fontWeight: 'bold'}}>
+                        <div className="metric-card premium-card" style={{borderLeft: '4px solid var(--info)'}}>
+                          <h3 style={{color: 'var(--text-muted)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '1px'}}>Eficiencia de Resolución</h3>
+                          <div className="value" style={{color: 'var(--info)', fontSize: '2rem', fontWeight: 'bold'}}>
                             {promedioDias ?? 'N/A'}{promedioDias && <span style={{fontSize: '1rem'}}> días</span>}
                           </div>
-                          <span style={{fontSize: '0.8rem', color: '#cbd5e1'}}>Promedio para resolver ({resueltos.length} reporte{resueltos.length === 1 ? '' : 's'} resuelto{resueltos.length === 1 ? '' : 's'})</span>
+                          <span style={{fontSize: '0.8rem', color: 'var(--text-soft)'}}>Promedio para resolver ({resueltos.length} reporte{resueltos.length === 1 ? '' : 's'} resuelto{resueltos.length === 1 ? '' : 's'})</span>
                         </div>
                       )
                     })()}
@@ -907,8 +975,8 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                     {/* Gráfico 1: Diagrama de Pareto (80/20) */}
                     <div className="premium-card">
                       <div style={{marginBottom: '1rem', textAlign: 'center'}}>
-                        <h3 style={{margin: 0, color: '#e2e8f0', fontSize: '1.1rem', fontWeight: '600'}}>Diagrama de Pareto (Motivos)</h3>
-                        <p style={{margin: '0.2rem 0 0 0', color: '#94a3b8', fontSize: '0.75rem'}}>💡 Tip: Enfócate en las barras antes de que la línea roja cruce el 80%</p>
+                        <h3 style={{margin: 0, color: 'var(--text-soft)', fontSize: '1.1rem', fontWeight: '600'}}>Diagrama de Pareto (Motivos)</h3>
+                        <p style={{margin: '0.2rem 0 0 0', color: 'var(--text-muted)', fontSize: '0.75rem'}}>💡 Tip: Enfócate en las barras antes de que la línea roja cruce el 80%</p>
                       </div>
                       {paretoData.length > 0 ? (
                         <Chart 
@@ -953,14 +1021,14 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                             } 
                           }}
                         />
-                      ) : <p style={{textAlign:'center', color:'#94a3b8'}}>Sin datos</p>}
+                      ) : <p style={{textAlign:'center', color:'var(--text-muted)'}}>Sin datos</p>}
                     </div>
 
                     {/* Gráfico 2: Matriz Repuestos vs Producto */}
                     <div className="premium-card">
                       <div style={{marginBottom: '1rem', textAlign: 'center'}}>
-                        <h3 style={{margin: 0, color: '#e2e8f0', fontSize: '1.1rem', fontWeight: '600'}}>Top 5 Repuestos vs Producto</h3>
-                        <p style={{margin: '0.2rem 0 0 0', color: '#94a3b8', fontSize: '0.75rem'}}>💡 Tip: Cruza la pieza que más gasta dinero con el tipo de máquina que la rompe</p>
+                        <h3 style={{margin: 0, color: 'var(--text-soft)', fontSize: '1.1rem', fontWeight: '600'}}>Top 5 Repuestos vs Producto</h3>
+                        <p style={{margin: '0.2rem 0 0 0', color: 'var(--text-muted)', fontSize: '0.75rem'}}>💡 Tip: Cruza la pieza que más gasta dinero con el tipo de máquina que la rompe</p>
                       </div>
                       {top5RepuestosList.length > 0 ? (
                         <Bar 
@@ -986,14 +1054,14 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                             }
                           }}
                         />
-                      ) : <p style={{textAlign:'center', color:'#94a3b8'}}>No hay consumo de repuestos registrado</p>}
+                      ) : <p style={{textAlign:'center', color:'var(--text-muted)'}}>No hay consumo de repuestos registrado</p>}
                     </div>
 
                     {/* Gráfico 3: Tendencia en el Tiempo (Line Chart) */}
                     <div className="premium-card">
                       <div style={{marginBottom: '1rem', textAlign: 'center'}}>
-                        <h3 style={{margin: 0, color: '#e2e8f0', fontSize: '1.1rem', fontWeight: '600'}}>Tendencia en el Tiempo</h3>
-                        <p style={{margin: '0.2rem 0 0 0', color: '#94a3b8', fontSize: '0.75rem'}}>💡 Tip: Identifica picos o valles de incidencias en las fechas seleccionadas</p>
+                        <h3 style={{margin: 0, color: 'var(--text-soft)', fontSize: '1.1rem', fontWeight: '600'}}>Tendencia en el Tiempo</h3>
+                        <p style={{margin: '0.2rem 0 0 0', color: 'var(--text-muted)', fontSize: '0.75rem'}}>💡 Tip: Identifica picos o valles de incidencias en las fechas seleccionadas</p>
                       </div>
                       {sortedFechas.length > 0 ? (
                         <Line 
@@ -1014,7 +1082,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                               {
                                 label: 'Proyección (Regresión Lineal)',
                                 data: regressionLine,
-                                borderColor: '#8b5cf6',
+                                borderColor: '#2dd4bf',
                                 backgroundColor: 'transparent',
                                 borderDash: [5, 5],
                                 fill: false,
@@ -1033,14 +1101,14 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                             }
                           }}
                         />
-                      ) : <p style={{textAlign:'center', color:'#94a3b8'}}>Sin datos en este rango</p>}
+                      ) : <p style={{textAlign:'center', color:'var(--text-muted)'}}>Sin datos en este rango</p>}
                     </div>
 
                     {/* Gráfico 4: Stacked Bar (Estaciones vs Producto) */}
                     <div className="premium-card">
                       <div style={{marginBottom: '1rem', textAlign: 'center'}}>
-                        <h3 style={{margin: 0, color: '#e2e8f0', fontSize: '1.1rem', fontWeight: '600'}}>{chartTitle4}</h3>
-                        <p style={{margin: '0.2rem 0 0 0', color: '#94a3b8', fontSize: '0.75rem'}}>{chartTip4}</p>
+                        <h3 style={{margin: 0, color: 'var(--text-soft)', fontSize: '1.1rem', fontWeight: '600'}}>{chartTitle4}</h3>
+                        <p style={{margin: '0.2rem 0 0 0', color: 'var(--text-muted)', fontSize: '0.75rem'}}>{chartTip4}</p>
                       </div>
                       {stackedDatasets.length > 0 ? (
                         <Bar 
@@ -1064,20 +1132,20 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                             }
                           }}
                         />
-                      ) : <p style={{textAlign:'center', color:'#94a3b8', marginTop: '3rem'}}>Sin datos para perfilar.</p>}
+                      ) : <p style={{textAlign:'center', color:'var(--text-muted)', marginTop: '3rem'}}>Sin datos para perfilar.</p>}
                     </div>
 
                   </div>
 
                   {/* Motor de Narrativa Ejecutiva (Data Storytelling) */}
-                  <div className="premium-card" style={{marginTop: '1rem', borderLeft: '4px solid #10b981'}}>
-                    <h3 style={{margin: '0 0 1rem 0', color: '#60a5fa', fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+                  <div className="premium-card" style={{marginTop: '1rem', borderLeft: '4px solid var(--accent)'}}>
+                    <h3 style={{margin: '0 0 1rem 0', color: 'var(--primary-light)', fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
                       <span>🧠</span> Resumen Ejecutivo Automático (IA)
                     </h3>
-                    <div style={{display: 'flex', flexDirection: 'column', gap: '0.8rem', color: '#e2e8f0', fontSize: '0.95rem', lineHeight: '1.5'}}>
-                      {narrativa1 && <div style={{background: 'rgba(15, 23, 42, 0.5)', padding: '0.8rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)'}}>{narrativa1}</div>}
-                      {narrativa2 && <div style={{background: 'rgba(15, 23, 42, 0.5)', padding: '0.8rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)'}}>{narrativa2}</div>}
-                      {narrativa3 && <div style={{background: 'rgba(15, 23, 42, 0.5)', padding: '0.8rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)'}}>{narrativa3}</div>}
+                    <div style={{display: 'flex', flexDirection: 'column', gap: '0.8rem', color: 'var(--text-soft)', fontSize: '0.95rem', lineHeight: '1.5'}}>
+                      {narrativa1 && <div style={{background: 'rgba(15, 23, 42, 0.5)', padding: '0.8rem', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.05)'}}>{narrativa1}</div>}
+                      {narrativa2 && <div style={{background: 'rgba(15, 23, 42, 0.5)', padding: '0.8rem', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.05)'}}>{narrativa2}</div>}
+                      {narrativa3 && <div style={{background: 'rgba(15, 23, 42, 0.5)', padding: '0.8rem', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.05)'}}>{narrativa3}</div>}
                     </div>
                   </div>
                 </div>
@@ -1086,237 +1154,37 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
           )}
 
           {tab === 'soluciones' && (
-            <div className="table-container">
-              <h3 className="mb-4">Visor de Soluciones y Evidencias</h3>
-
-              {(() => {
-                const pendientes = reportes
-                  .filter(r => (r.estado || 'Pendiente') !== 'Resuelto')
-                  .map(r => ({ ...r, dias: diasTranscurridos(r.creado_en, null) }))
-                  .sort((a, b) => b.dias - a.dias)
-                if (pendientes.length === 0) return null
-                return (
-                  <div style={{background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', borderRadius: '8px', padding: '1rem', marginBottom: '1.5rem'}}>
-                    <p style={{color: '#ef4444', fontWeight: 'bold', marginBottom: '0.75rem'}}>⚠️ {pendientes.length} reporte(s) sin resolver — dale prioridad a los más antiguos:</p>
-                    <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
-                      {pendientes.slice(0, 5).map(r => (
-                        <div key={r.id} onClick={() => setReporteModal(r)} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#0f172a', padding: '0.5rem 0.75rem', borderRadius: '6px', cursor: 'pointer', gap: '0.5rem', flexWrap: 'wrap'}}>
-                          <span style={{fontSize: '0.85rem', color: '#e2e8f0'}}><strong>{r.motivo}</strong> · {r.tracto_placa || r.carreta_placa ? `${r.tracto_placa || ''} ${r.carreta_placa || ''}`.trim() : r.estacion_id}</span>
-                          <span style={{fontSize: '0.75rem', fontWeight: 'bold', color: colorDeEstado(r.estado), background: colorDeEstado(r.estado) + '22', padding: '0.15rem 0.6rem', borderRadius: '999px', whiteSpace: 'nowrap'}}>
-                            {r.estado || 'Pendiente'} · {r.dias} día(s)
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )
-              })()}
-
-              {/* Filtro de Módulo y Estaciones */}
-              <div style={{display: 'flex', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem'}}>
-                <button className={visorModulo === 'grifo' ? 'btn-primary' : 'btn-secondary'} onClick={() => setVisorModulo('grifo')} style={{flex: 1}}>
-                  Soluciones Grifos
-                </button>
-                <button className={visorModulo === 'unidades' ? 'btn-primary' : 'btn-secondary'} onClick={() => setVisorModulo('unidades')} style={{flex: 1}}>
-                  Soluciones Unidades
-                </button>
-              </div>
-              
-              {visorModulo === 'grifo' && estacionesPermitidas.length > 1 && (
-                <div style={{background: '#0f172a', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '1.5rem'}}>
-                  <p style={{color: '#94a3b8', fontSize: '0.9rem', marginBottom: '0.5rem'}}>Filtrar por Estación:</p>
-                  <div style={{display: 'flex', flexWrap: 'wrap', gap: '0.5rem'}}>
-                    {estacionesPermitidas.map(est => (
-                      <label key={est} style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', background: dashFiltroEstaciones.includes(est) ? '#1e3a8a' : '#1e293b', padding: '0.4rem 0.8rem', borderRadius: '15px', border: dashFiltroEstaciones.includes(est) ? '1px solid #3b82f6' : '1px solid transparent', transition: 'all 0.2s', fontSize: '0.85rem'}}>
-                        <input type="checkbox" checked={dashFiltroEstaciones.includes(est)} onChange={() => toggleEstacionFiltro(est)} style={{display: 'none'}} />
-                        <span style={{color: dashFiltroEstaciones.includes(est) ? 'white' : '#cbd5e1'}}>{est}</span>
-                      </label>
-                    ))}
-                  </div>
-                  {dashFiltroEstaciones.length > 0 && (
-                    <button className="btn-text" style={{marginTop: '0.5rem', padding: '0', fontSize: '0.8rem'}} onClick={() => setDashFiltroEstaciones([])}>Desmarcar todas (Mostrar {estacionesPermitidas.length})</button>
-                  )}
-                </div>
-              )}
-
-              {visorModulo === 'unidades' && (
-                <div style={{background: '#0f172a', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '1.5rem'}}>
-                  <p style={{color: '#94a3b8', fontSize: '0.9rem', marginBottom: '0.5rem'}}>Buscar por placa (Tracto o Carreta):</p>
-                  <input
-                    type="text"
-                    value={visorBusquedaPlaca}
-                    onChange={e => setVisorBusquedaPlaca(e.target.value)}
-                    placeholder="Ej: ABC-123"
-                    style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}}
-                  />
-                </div>
-              )}
-
-              {(() => {
-                const activeStationsVisor = dashFiltroEstaciones.length > 0 ? dashFiltroEstaciones : estacionesPermitidas
-                const reportesVisorFiltrados = reportes.filter(r => {
-                  if (visorModulo === 'unidades') {
-                    if (r.modulo !== 'unidades') return false
-                    const q = visorBusquedaPlaca.trim().toUpperCase()
-                    if (q === '') return true
-                    return (r.tracto_placa || '').toUpperCase().includes(q) || (r.carreta_placa || '').toUpperCase().includes(q)
-                  }
-                  return r.modulo !== 'unidades' && activeStationsVisor.includes(r.estacion_id)
-                })
-                
-                if (reportesVisorFiltrados.length === 0) {
-                  return <p className="text-muted">No hay soluciones ni reportes registrados aún en las estaciones seleccionadas.</p>
-                }
-                
-                return (
-                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem'}}>
-                    {reportesVisorFiltrados.map(r => (
-                    <div key={r.id} onClick={() => setReporteModal(r)} style={{background: '#0f172a', padding: '1.25rem', borderRadius: '8px', border: '1px solid #3b82f6', cursor: 'pointer', transition: 'transform 0.2s'}} onMouseOver={e => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}>
-                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem', flexWrap: 'wrap', gap: '0.5rem'}}>
-                        <span style={{fontWeight: 'bold', color: '#3b82f6', fontSize: '1.1rem'}}>{r.motivo}</span>
-                        <span style={{fontSize: '0.7rem', fontWeight: 'bold', color: colorDeEstado(r.estado), background: colorDeEstado(r.estado) + '22', padding: '0.15rem 0.6rem', borderRadius: '999px'}}>{r.estado || 'Pendiente'}</span>
-                      </div>
-                      <p style={{fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem'}}>{r.creado_en ? new Date(r.creado_en + (r.creado_en.endsWith('Z') ? '' : 'Z')).toLocaleString() : ''}</p>
-                      {r.modulo === 'unidades' || r.estacion_id === 'UNIDADES' ? (
-                        <p style={{fontSize: '0.9rem', marginBottom: '0.5rem', color: '#cbd5e1'}}>
-                          {r.tracto_placa && <span style={{marginRight: '0.5rem'}}><strong>Tracto:</strong> {r.tracto_placa}</span>}
-                          {r.carreta_placa && <span><strong>Carreta:</strong> {r.carreta_placa}</span>}
-                        </p>
-                      ) : (
-                        <p style={{fontSize: '0.9rem', marginBottom: '0.5rem', color: '#cbd5e1'}}><strong>Estación:</strong> {r.estacion_id} <br/><strong>Equipo:</strong> {displayIslaLado(r.isla_lado)} | <strong>Prod:</strong> {r.producto}</p>
-                      )}
-                      <p style={{color: '#e2e8f0', marginBottom: '0.75rem', padding: '0.5rem', background: 'rgba(0,0,0,0.2)', borderRadius: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{r.descripcion ? r.descripcion.replace(/\[📦 Repuesto utilizado: (.*?) x(\d+)\]$/, '').trim() : ''}</p>
-                      <div style={{display: 'flex', flexDirection: 'column', gap: '0.25rem'}}>
-                        <p style={{fontSize: '0.8rem', color: '#64748b', margin: 0}}>📸 {r.fotos && r.fotos !== 'Sin foto' ? r.fotos.split(',').length : 0} foto(s)</p>
-                        <p style={{fontSize: '0.85rem', color: '#10b981', margin: 0}}>Audit: <strong>{r.creado_por}</strong></p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                )
-              })()}
-            </div>
+            <VisorSoluciones
+              reportes={reportes}
+              user={user}
+              estacionesPermitidas={estacionesPermitidas}
+              displayIslaLado={displayIslaLado}
+              setReporteModal={setReporteModal}
+            />
           )}
 
-          {/* Modal de Detalle de Reporte */}
-          {reporteModal && (
-            <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: '1rem'}}>
-              <div style={{background: '#0f172a', padding: '2rem', borderRadius: '12px', border: '1px solid #3b82f6', width: '100%', maxWidth: '600px', maxHeight: '90vh', overflowY: 'auto'}}>
-                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem'}}>
-                  <div style={{display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap'}}>
-                    <h3 style={{color: '#3b82f6', margin: 0}}>{reporteModal.motivo}</h3>
-                    <span style={{fontSize: '0.75rem', fontWeight: 'bold', color: colorDeEstado(reporteModal.estado), background: colorDeEstado(reporteModal.estado) + '22', padding: '0.2rem 0.7rem', borderRadius: '999px'}}>{reporteModal.estado || 'Pendiente'}</span>
-                  </div>
-                  <button onClick={() => setReporteModal(null)} style={{background: 'transparent', border: 'none', color: '#ef4444', fontSize: '1.5rem', cursor: 'pointer', lineHeight: 1}}>×</button>
-                </div>
-                
-                <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem'}}>
-                  <div><small style={{color: '#94a3b8', display: 'block'}}>Fecha y Hora</small><strong>{reporteModal.creado_en ? new Date(reporteModal.creado_en + (reporteModal.creado_en.endsWith('Z') ? '' : 'Z')).toLocaleString() : ''}</strong></div>
-                  <div><small style={{color: '#94a3b8', display: 'block'}}>Autor (Auditoría)</small><strong style={{color: '#10b981'}}>{reporteModal.creado_por}</strong></div>
-                  {reporteModal.modulo === 'unidades' || reporteModal.estacion_id === 'UNIDADES' ? (
-                    <>
-                      {reporteModal.tracto_placa && <div><small style={{color: '#94a3b8', display: 'block'}}>Tracto</small><strong>{reporteModal.tracto_placa}</strong></div>}
-                      {reporteModal.carreta_placa && <div><small style={{color: '#94a3b8', display: 'block'}}>Carreta</small><strong>{reporteModal.carreta_placa}</strong></div>}
-                    </>
-                  ) : (
-                    <>
-                      <div><small style={{color: '#94a3b8', display: 'block'}}>Estación</small><strong>{reporteModal.estacion_id}</strong></div>
-                      <div><small style={{color: '#94a3b8', display: 'block'}}>Equipo / Producto</small><strong>{displayIslaLado(reporteModal.isla_lado)} | {reporteModal.producto}</strong></div>
-                    </>
-                  )}
-                </div>
-                
-                <small style={{color: '#94a3b8', display: 'block', marginBottom: '0.5rem'}}>Descripción</small>
-                {(() => {
-                  const desc = reporteModal.descripcion || '';
-                  const match = desc.match(/\[📦 Repuesto utilizado: (.*?) x(\d+)\]$/);
-                  
-                  if (match) {
-                    const cleanDesc = desc.replace(match[0], '').trim();
-                    return (
-                      <>
-                        <div style={{background: '#1e293b', padding: '1rem', borderRadius: '8px', whiteSpace: 'pre-wrap', color: '#e2e8f0', marginBottom: '1.5rem'}}>
-                          {cleanDesc}
-                        </div>
-                        <small style={{color: '#94a3b8', display: 'block', marginBottom: '0.5rem'}}>Repuesto Utilizado (Del Inventario)</small>
-                        <div style={{display: 'inline-block', background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid #3b82f6'}}>
-                          📦 <strong>{match[1]}</strong> <span style={{background: '#3b82f6', color: 'white', padding: '2px 8px', borderRadius: '12px', fontSize: '0.9rem', marginLeft: '0.5rem'}}>Cantidad: {match[2]}</span>
-                        </div>
-                      </>
-                    );
-                  }
-                  
-                  return (
-                    <div style={{background: '#1e293b', padding: '1rem', borderRadius: '8px', whiteSpace: 'pre-wrap', color: '#e2e8f0'}}>
-                      {desc}
-                    </div>
-                  );
-                })()}
-
-                <div>
-                  <small style={{color: '#94a3b8', display: 'block', marginBottom: '0.5rem'}}>Evidencias Fotográficas</small>
-                  <div style={{background: '#1e293b', padding: '1rem', borderRadius: '8px', border: '1px dashed #334155', display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
-                    {reporteModal.fotos && reporteModal.fotos !== 'Sin foto' ? (() => {
-                      const lista = reporteModal.fotos.split(',')
-                      const galeria = lista.filter(f => f.startsWith('http'))
-                      return lista.map((f, i) => (
-                        f.startsWith('http') ?
-                          <div key={i} onClick={() => openPreview(galeria, f)} onContextMenu={(e) => e.preventDefault()} style={{cursor: 'pointer'}}>
-                            <img src={f} alt="Evidencia" loading="lazy" draggable={false} style={{height: '100px', borderRadius: '8px', border: '1px solid #475569', objectFit: 'cover', pointerEvents: 'none'}} />
-                          </div>
-                        : <span key={i} style={{color: '#cbd5e1'}}>{f}</span>
-                      ))
-                    })() : <span className="text-muted">No hay evidencias</span>}
-                  </div>
-                </div>
-
-                <ReporteSeguimiento
-                  reporte={reporteModal}
-                  user={user}
-                  showAlert={showAlert}
-                  openPreview={openPreview}
-                  onEstadoActualizado={(estado, resuelto_en) => {
-                    setReporteModal(prev => prev ? { ...prev, estado, resuelto_en } : prev)
-                    setReportes(prev => prev.map(r => r.id === reporteModal.id ? { ...r, estado, resuelto_en } : r))
-                  }}
-                />
-
-                {(user.permiso_editar_reportes) && (
-                  <div style={{marginTop: '2rem', display: 'flex', gap: '1rem', justifyContent: 'flex-end', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1rem'}}>
-                    <button className="btn-secondary" style={{borderColor: '#ef4444', color: '#ef4444'}} onClick={async () => {
-                      if (window.confirm('¿Seguro que deseas eliminar este reporte permanentemente?')) {
-                        const { error } = await supabase.from('reportes').delete().eq('id', reporteModal.id)
-                        if (!error) {
-                          setReportes(reportes.filter(r => r.id !== reporteModal.id))
-                          setReporteModal(null)
-                          showAlert('Éxito', 'Reporte eliminado.')
-                        } else {
-                          showAlert('Error', error.message)
-                        }
-                      }
-                    }}>🗑️ Eliminar</button>
-                    <button className="btn-primary" onClick={() => {
-                      if (onEditReport) {
-                        onEditReport(reporteModal)
-                      }
-                    }}>✏️ Editar</button>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+          <ReporteDetalleModal
+            reporteModal={reporteModal}
+            setReporteModal={setReporteModal}
+            user={user}
+            setReportes={setReportes}
+            showAlert={showAlert}
+            openPreview={openPreview}
+            displayIslaLado={displayIslaLado}
+            onEditReport={onEditReport}
+          />
 
           {tab === 'usuarios' && (
             <div className="table-container">
               {editingUser ? (
-                <div className="edit-user-form" style={{padding: '1.5rem', background: '#0f172a', borderRadius: '12px', border: '1px dashed #3b82f6'}}>
+                <div className="edit-user-form" style={{padding: '1.5rem', background: 'var(--card-bg)', borderRadius: 'var(--radius-lg)', border: '1px dashed var(--border-soft)'}}>
                   <h3 className="mb-4">Editando Usuario: <span className="text-accent">{editingUser.nombre}</span></h3>
                   <form onSubmit={handleSaveUserPermissions}>
                     
                     <div style={{display: 'flex', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap'}}>
                       <div style={{flex: 1}}>
                         <label className="text-muted" style={{display: 'block', marginBottom: '0.5rem'}}>Rol de Sistema</label>
-                        <select value={editingUser.rol} onChange={e => setEditingUser({...editingUser, rol: e.target.value})} style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}}>
+                        <select value={editingUser.rol} onChange={e => setEditingUser({...editingUser, rol: e.target.value})} style={{width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)'}}>
                           <option>Operario</option>
                           <option>Gerencia</option>
                           <option>Admin Estación</option>
@@ -1330,7 +1198,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                             const isChecked = userEstsUpper.includes('TODAS') || userEstsUpper.includes(est.nombre.toUpperCase())
                             
                             return (
-                              <label key={est.id} style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '0.5rem 1rem', background: '#1e293b', borderRadius: '4px', border: '1px solid #334155'}}>
+                              <label key={est.id} style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '0.5rem 1rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-soft)'}}>
                                 <input 
                                   type="checkbox" 
                                   checked={isChecked} 
@@ -1357,33 +1225,41 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
 
                     <h4 className="mb-2 text-muted">Módulos Permitidos (ABAC)</h4>
                     <div className="checkbox-group" style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '2rem'}}>
-                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: '#1e293b', borderRadius: '8px'}}>
+                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)'}}>
                         <input type="checkbox" checked={editingUser.permiso_config} onChange={e => setEditingUser({...editingUser, permiso_config: e.target.checked})} style={{width: 'auto'}} />
                         Acceso a Configuración del Sistema
                       </label>
-                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: '#1e293b', borderRadius: '8px'}}>
+                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)'}}>
                         <input type="checkbox" checked={editingUser.permiso_inventario} onChange={e => setEditingUser({...editingUser, permiso_inventario: e.target.checked})} style={{width: 'auto'}} />
                         Gestionar Inventario y Productos
                       </label>
-                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: '#1e293b', borderRadius: '8px'}}>
+                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)'}}>
                         <input type="checkbox" checked={editingUser.permiso_dashboard} onChange={e => setEditingUser({...editingUser, permiso_dashboard: e.target.checked})} style={{width: 'auto'}} />
                         Ver Dashboard de Métricas
                       </label>
-                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: '#1e293b', borderRadius: '8px'}}>
+                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)', gridColumn: '1 / -1'}}>
                         <input type="checkbox" checked={editingUser.permiso_soluciones} onChange={e => setEditingUser({...editingUser, permiso_soluciones: e.target.checked})} style={{width: 'auto'}} />
-                        Ver Visor de Soluciones
+                        Ver Visor de Soluciones (interruptor general)
                       </label>
-                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: '#1e293b', borderRadius: '8px', border: '1px solid #10b981'}}>
+                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)', border: '1px solid var(--accent)'}}>
+                        <input type="checkbox" checked={editingUser.permiso_ver_grifos !== false} onChange={e => setEditingUser({...editingUser, permiso_ver_grifos: e.target.checked})} style={{width: 'auto'}} />
+                        Visor: Ver Soluciones Estaciones
+                      </label>
+                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)', border: '1px solid var(--warning)'}}>
+                        <input type="checkbox" checked={editingUser.permiso_ver_unidades === true} onChange={e => setEditingUser({...editingUser, permiso_ver_unidades: e.target.checked})} style={{width: 'auto'}} />
+                        Visor: Ver Soluciones Unidades
+                      </label>
+                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)', border: '1px solid var(--accent)'}}>
                         <input type="checkbox" checked={editingUser.permiso_grifos !== false} onChange={e => setEditingUser({...editingUser, permiso_grifos: e.target.checked})} style={{width: 'auto'}} />
-                        Acceso a Sistema Grifos
+                        Modo Operario: Crear Reportes Estaciones
                       </label>
-                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: '#1e293b', borderRadius: '8px', border: '1px solid #f59e0b'}}>
+                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)', border: '1px solid var(--warning)'}}>
                         <input type="checkbox" checked={editingUser.permiso_unidades === true} onChange={e => setEditingUser({...editingUser, permiso_unidades: e.target.checked})} style={{width: 'auto'}} />
-                        Acceso a Sistema Unidades
+                        Modo Operario: Crear Reportes Unidades
                       </label>
-                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: '#1e293b', borderRadius: '8px', gridColumn: '1 / -1', border: '1px solid #ef4444'}}>
+                      <label style={{display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '1rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)', gridColumn: '1 / -1', border: '1px solid var(--danger)'}}>
                         <input type="checkbox" checked={editingUser.permiso_editar_reportes} onChange={e => setEditingUser({...editingUser, permiso_editar_reportes: e.target.checked})} />
-                        <span style={{color: '#ef4444', fontWeight: 'bold'}}>Permitir Editar/Eliminar Reportes</span>
+                        <span style={{color: 'var(--danger)', fontWeight: 'bold'}}>Permitir Editar/Eliminar Reportes</span>
                       </label>
                     </div>
 
@@ -1394,23 +1270,23 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                         value={nuevaPasswordEdit}
                         onChange={e => setNuevaPasswordEdit(e.target.value)}
                         placeholder="Dejar vacío para no cambiarla"
-                        style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}}
+                        style={{width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)'}}
                       />
-                      <small style={{color: '#64748b', display: 'block', marginTop: '0.3rem'}}>Úsalo si el usuario olvidó su contraseña o quieres cambiarla por seguridad.</small>
+                      <small style={{color: 'var(--text-muted)', display: 'block', marginTop: '0.3rem'}}>Úsalo si el usuario olvidó su contraseña o quieres cambiarla por seguridad.</small>
                     </div>
 
                     <div style={{display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginTop: '1rem'}}>
                       <div style={{display: 'flex', gap: '1rem'}}>
                         <button type="submit" className="btn-primary" style={{width: 'auto'}}>Guardar Cambios</button>
-                        <button type="button" className="btn-secondary" style={{width: 'auto'}} onClick={() => { setEditingUser(null); setNuevaPasswordEdit('') }}>Cancelar</button>
+                        <button type="button" className="btn-toggle" style={{width: 'auto'}} onClick={() => { setEditingUser(null); setNuevaPasswordEdit('') }}>Cancelar</button>
                       </div>
-                      <button type="button" className="btn-text" style={{color: '#ef4444', border: '1px solid #ef4444', padding: '0.5rem 1rem'}} onClick={() => handleDeleteUser(editingUser.id)}>🗑️ Eliminar Usuario</button>
+                      <button type="button" className="btn-text" style={{color: 'var(--danger)', border: '1px solid var(--danger)', padding: '0.5rem 1rem'}} onClick={() => handleDeleteUser(editingUser.id)}>🗑️ Eliminar Usuario</button>
                     </div>
                   </form>
                 </div>
               ) : (
                 <>
-                  <div style={{marginBottom: '2rem', padding: '1.5rem', background: '#0f172a', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)'}}>
+                  <div style={{marginBottom: '2rem', padding: '1.5rem', background: 'var(--card-bg)', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(255,255,255,0.1)'}}>
                     <h3 style={{marginBottom: '1rem'}}>Crear Nuevo Usuario</h3>
                     <form onSubmit={handleCreateUser} style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
                       <input type="text" placeholder="Nombres (ej: Juan)" value={nuevoUsuario.nombres} onChange={e=>setNuevoUsuario({...nuevoUsuario, nombres: e.target.value})} required style={{flex: 1, minWidth: '150px'}} />
@@ -1438,13 +1314,13 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                             <td>{u.id}</td>
                             <td>
                               <strong>{u.nombre}</strong>
-                              {u.nombre_completo && <div style={{fontSize: '0.75rem', color: '#94a3b8'}}>{u.nombre_completo}</div>}
+                              {u.nombre_completo && <div style={{fontSize: '0.75rem', color: 'var(--text-muted)'}}>{u.nombre_completo}</div>}
                             </td>
                             <td>{u.rol}</td>
-                            <td style={{fontSize: '0.8rem', color: '#94a3b8'}}>
+                            <td style={{fontSize: '0.8rem', color: 'var(--text-muted)'}}>
                               {[u.permiso_dashboard && 'Dashboard', u.permiso_inventario && 'Inventario', u.permiso_soluciones && 'Soluciones', u.permiso_config && 'Config'].filter(Boolean).join(', ') || 'Ninguno'}
                             </td>
-                            <td><button className="btn-text" style={{color: '#3b82f6'}} onClick={() => { setEditingUser(u); setNuevaPasswordEdit('') }}>Configurar Permisos</button></td>
+                            <td><button className="btn-text" style={{color: 'var(--primary)'}} onClick={() => { setEditingUser(u); setNuevaPasswordEdit('') }}>Configurar Permisos</button></td>
                           </tr>
                         ))}
                       </tbody>
@@ -1458,11 +1334,11 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
           {tab === 'inventario' && (
             <div className="table-container">
               
-              <div style={{display: 'flex', gap: '1rem', marginBottom: '2rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem'}}>
-                <button className={invModulo === 'grifo' ? 'btn-primary' : 'btn-secondary'} onClick={() => setInvModulo('grifo')} style={{flex: 1}}>
+              <div style={{display: 'flex', gap: '1rem', marginBottom: '2rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem', flexWrap: 'wrap'}}>
+                <button className={invModulo === 'grifo' ? 'btn-primary' : 'btn-toggle'} onClick={() => setInvModulo('grifo')} style={{flex: 1, minWidth: '140px'}}>
                   Inventario de Grifos
                 </button>
-                <button className={invModulo === 'unidades' ? 'btn-primary' : 'btn-secondary'} onClick={() => setInvModulo('unidades')} style={{flex: 1}}>
+                <button className={invModulo === 'unidades' ? 'btn-primary' : 'btn-toggle'} onClick={() => setInvModulo('unidades')} style={{flex: 1, minWidth: '140px'}}>
                   Inventario de Unidades
                 </button>
               </div>
@@ -1473,12 +1349,12 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                    const estacionesArray = user.estaciones === 'Todas' ? estaciones.map(e => e.nombre) : user.estaciones.split(',').map(s=>s.trim()).filter(Boolean)
                    const opciones = Array.from(new Set(estacionesArray.map(e => e.toUpperCase())))
                    if (opciones.length <= 1) {
-                     return <h4 style={{color: '#3b82f6', margin: 0}}>Contexto: {selectedInvEstacion}</h4>
+                     return <h4 style={{color: 'var(--primary)', margin: 0}}>Contexto: {selectedInvEstacion}</h4>
                    }
                    return (
                      <div style={{display: 'flex', alignItems: 'center', gap: '1rem'}}>
-                       <span style={{color: '#94a3b8'}}>Seleccionar Estación:</span>
-                       <select value={selectedInvEstacion} onChange={e => setSelectedInvEstacion(e.target.value)} style={{padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #3b82f6', minWidth: '200px'}}>
+                       <span style={{color: 'var(--text-muted)'}}>Seleccionar Estación:</span>
+                       <select value={selectedInvEstacion} onChange={e => setSelectedInvEstacion(e.target.value)} style={{padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)', minWidth: '200px'}}>
                          {opciones.map(op => <option key={op} value={op}>{op}</option>)}
                        </select>
                      </div>
@@ -1486,7 +1362,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                 })()}
               </div>
 
-              <div style={{background: '#0f172a', padding: '1.5rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)'}}>
+              <div style={{background: 'var(--card-bg)', padding: '1.5rem', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(255,255,255,0.1)'}}>
                 <h4 style={{marginBottom: '1rem'}}>Añadir Ítem a {selectedInvEstacion}</h4>
                 <form onSubmit={async (e) => {
                   e.preventDefault()
@@ -1519,8 +1395,8 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                     showAlert('Éxito', 'Ítem agregado correctamente.')
                   }
                 }} style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
-                  <input name="itemNombre" type="text" placeholder="Nombre del Producto / Repuesto" required style={{flex: 2, padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155', minWidth: '200px'}} />
-                  <input name="itemStock" type="number" placeholder="Cantidad / Stock" required min="0" style={{flex: 1, padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155', minWidth: '100px'}} />
+                  <input name="itemNombre" type="text" placeholder="Nombre del Producto / Repuesto" required style={{flex: 2, padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)', minWidth: '200px'}} />
+                  <input name="itemStock" type="number" placeholder="Cantidad / Stock" required min="0" style={{flex: 1, padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)', minWidth: '100px'}} />
                   <button type="submit" className="btn-primary" style={{width: 'auto'}}>+ Añadir</button>
                 </form>
               </div>
@@ -1560,22 +1436,22 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
 
                         return (
                           <tr key={inv.id}>
-                            <td>{inv.nombre}<br/><small style={{color: '#64748b', fontSize: '0.75rem'}}>Por: {inv.creado_por || 'Sistema'} {inv.creado_en && ` - ${new Date(inv.creado_en).toLocaleDateString()}`}</small></td>
-                            <td style={{fontWeight: 'bold', color: inv.stock < 5 ? '#ef4444' : '#10b981'}}>{inv.stock}</td>
+                            <td>{inv.nombre}<br/><small style={{color: 'var(--text-muted)', fontSize: '0.75rem'}}>Por: {inv.creado_por || 'Sistema'} {inv.creado_en && ` - ${new Date(inv.creado_en).toLocaleDateString()}`}</small></td>
+                            <td style={{fontWeight: 'bold', color: inv.stock < 5 ? 'var(--danger)' : 'var(--accent)'}}>{inv.stock}</td>
                             <td>
                               {pronostico30Dias > 0 ? (
                                 <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap'}}>
                                   <span>~{pronostico30Dias} uds/mes</span>
-                                  {alertaCompra && <span style={{background: '#ef4444', color: 'white', padding: '0.2rem 0.5rem', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 'bold', animation: 'pulse 2s infinite', whiteSpace: 'nowrap'}}>⚠️ Comprar {pronostico30Dias - inv.stock}</span>}
+                                  {alertaCompra && <span style={{background: 'var(--danger)', color: 'white', padding: '0.2rem 0.5rem', borderRadius: 'var(--radius-lg)', fontSize: '0.7rem', fontWeight: 'bold', animation: 'pulse 2s infinite', whiteSpace: 'nowrap'}}>⚠️ Comprar {pronostico30Dias - inv.stock}</span>}
                                 </div>
                               ) : (
-                                <span style={{color: '#64748b'}}>Sin datos suficientes</span>
+                                <span style={{color: 'var(--text-muted)'}}>Sin datos suficientes</span>
                               )}
                             </td>
                             <td style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
                               <button className="btn-primary" style={{padding: '0.25rem 0.5rem', fontSize: '0.8rem', width: 'auto'}} onClick={() => setKardexModal(inv)}>Movimientos</button>
                               {(user.permiso_editar_reportes || user.rol === 'Gerencia') && (
-                                <button className="btn-text" style={{color: '#ef4444', padding: 0}} onClick={() => {
+                                <button className="btn-text" style={{color: 'var(--danger)', padding: 0}} onClick={() => {
                                   showConfirm('Eliminar Ítem', `¿Estás seguro de eliminar ${inv.nombre}?`, async () => {
                                     const { error } = await supabase.from('inventario').delete().eq('id', inv.id)
                                     if (error) showAlert('Error', error.message)
@@ -1594,19 +1470,19 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
               {/* Modal de Kardex */}
               {kardexModal && (
                 <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: '1rem'}}>
-                  <div style={{background: '#0f172a', padding: '2rem', borderRadius: '12px', border: '1px solid #3b82f6', width: '100%', maxWidth: '700px', maxHeight: '90vh', overflowY: 'auto'}}>
+                  <div style={{background: 'var(--card-bg)', padding: '2rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-soft)', boxShadow: 'var(--shadow-float)', width: '100%', maxWidth: '700px', maxHeight: '90vh', overflowY: 'auto'}}>
                     <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem'}}>
                       <div>
-                        <h3 style={{color: '#3b82f6', margin: 0}}>{kardexModal.nombre}</h3>
-                        <p style={{margin: 0, color: '#94a3b8', fontSize: '0.9rem'}}>{kardexModal.estacion}</p>
+                        <h3 style={{color: 'var(--primary)', margin: 0}}>{kardexModal.nombre}</h3>
+                        <p style={{margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem'}}>{kardexModal.estacion}</p>
                       </div>
                       <div style={{textAlign: 'right'}}>
-                        <h2 style={{margin: 0, color: kardexModal.stock < 5 ? '#ef4444' : '#10b981'}}>{kardexModal.stock} <small style={{fontSize: '0.9rem', color: '#64748b'}}>en stock</small></h2>
+                        <h2 style={{margin: 0, color: kardexModal.stock < 5 ? 'var(--danger)' : 'var(--accent)'}}>{kardexModal.stock} <small style={{fontSize: '0.9rem', color: 'var(--text-muted)'}}>en stock</small></h2>
                       </div>
                     </div>
 
-                    <div style={{background: '#1e293b', padding: '1rem', borderRadius: '8px', marginBottom: '2rem'}}>
-                      <h4 style={{marginBottom: '1rem', color: '#cbd5e1'}}>Nuevo Movimiento (Ajuste)</h4>
+                    <div style={{background: 'var(--bg-elevated)', padding: '1rem', borderRadius: 'var(--radius-md)', marginBottom: '2rem'}}>
+                      <h4 style={{marginBottom: '1rem', color: 'var(--text-soft)'}}>Nuevo Movimiento (Ajuste)</h4>
                       <form onSubmit={async (e) => {
                         e.preventDefault()
                         const tipo = e.target.tipoMov.value
@@ -1642,25 +1518,25 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                         showAlert('Éxito', 'Movimiento registrado.')
                       }} style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-end'}}>
                         <div style={{flex: 1, minWidth: '100px'}}>
-                          <label style={{fontSize: '0.8rem', color: '#94a3b8'}}>Tipo</label>
-                          <select name="tipoMov" required style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#0f172a', color: 'white', border: '1px solid #334155'}}>
+                          <label style={{fontSize: '0.8rem', color: 'var(--text-muted)'}}>Tipo</label>
+                          <select name="tipoMov" required style={{width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--card-bg)', color: 'white', border: '1px solid var(--border-soft)'}}>
                             <option value="INGRESO">+ Ingreso (Compra)</option>
                             <option value="SALIDA">- Salida (Merma/Préstamo)</option>
                           </select>
                         </div>
                         <div style={{flex: 1, minWidth: '80px'}}>
-                          <label style={{fontSize: '0.8rem', color: '#94a3b8'}}>Cant.</label>
-                          <input type="number" name="cantMov" min="1" required style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#0f172a', color: 'white', border: '1px solid #334155'}} />
+                          <label style={{fontSize: '0.8rem', color: 'var(--text-muted)'}}>Cant.</label>
+                          <input type="number" name="cantMov" min="1" required style={{width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--card-bg)', color: 'white', border: '1px solid var(--border-soft)'}} />
                         </div>
                         <div style={{flex: 2, minWidth: '150px'}}>
-                          <label style={{fontSize: '0.8rem', color: '#94a3b8'}}>Motivo / Descripción</label>
-                          <input type="text" name="motivoMov" required placeholder="Ej: Préstamo a estación X" style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#0f172a', color: 'white', border: '1px solid #334155'}} />
+                          <label style={{fontSize: '0.8rem', color: 'var(--text-muted)'}}>Motivo / Descripción</label>
+                          <input type="text" name="motivoMov" required placeholder="Ej: Préstamo a estación X" style={{width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--card-bg)', color: 'white', border: '1px solid var(--border-soft)'}} />
                         </div>
                         <button type="submit" className="btn-primary" style={{width: 'auto', padding: '0.5rem 1rem'}}>Guardar</button>
                       </form>
                     </div>
 
-                    <h4 style={{marginBottom: '1rem', color: '#cbd5e1'}}>Historial de Movimientos</h4>
+                    <h4 style={{marginBottom: '1rem', color: 'var(--text-soft)'}}>Historial de Movimientos</h4>
                     <table style={{fontSize: '0.85rem'}}>
                       <thead>
                         <tr><th>Fecha</th><th>Usuario</th><th>Tipo</th><th>Cant</th><th>Motivo</th></tr>
@@ -1671,9 +1547,9 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                         ) : (
                           movimientos.filter(m => m.inventario_id === kardexModal.id).map(m => (
                             <tr key={m.id}>
-                              <td style={{color: '#94a3b8'}}>{m.creado_en ? new Date(m.creado_en + (m.creado_en.endsWith('Z') ? '' : 'Z')).toLocaleString() : ''}</td>
+                              <td style={{color: 'var(--text-muted)'}}>{m.creado_en ? new Date(m.creado_en + (m.creado_en.endsWith('Z') ? '' : 'Z')).toLocaleString() : ''}</td>
                               <td>{m.creado_por}</td>
-                              <td style={{color: m.tipo === 'INGRESO' ? '#10b981' : '#ef4444', fontWeight: 'bold'}}>{m.tipo === 'INGRESO' ? '+' : '-'}{m.tipo}</td>
+                              <td style={{color: m.tipo === 'INGRESO' ? 'var(--accent)' : 'var(--danger)', fontWeight: 'bold'}}>{m.tipo === 'INGRESO' ? '+' : '-'}{m.tipo}</td>
                               <td>{m.cantidad}</td>
                               <td>{m.motivo}</td>
                             </tr>
@@ -1682,7 +1558,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                       </tbody>
                     </table>
                     
-                    <button className="btn-secondary full-width mt-4" onClick={() => setKardexModal(null)}>Cerrar Historial</button>
+                    <button className="btn-toggle full-width mt-4" onClick={() => setKardexModal(null)}>Cerrar Historial</button>
                   </div>
                 </div>
               )}
@@ -1691,11 +1567,11 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
 
           {tab === 'mantenimiento' && (
             <div className="table-container">
-              <div style={{display: 'flex', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem'}}>
-                <button className={mantModulo === 'grifo' ? 'btn-primary' : 'btn-secondary'} onClick={() => setMantModulo('grifo')} style={{flex: 1}}>
+              <div style={{display: 'flex', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem', flexWrap: 'wrap'}}>
+                <button className={mantModulo === 'grifo' ? 'btn-primary' : 'btn-toggle'} onClick={() => setMantModulo('grifo')} style={{flex: 1, minWidth: '140px'}}>
                   Mantenimiento Grifos
                 </button>
-                <button className={mantModulo === 'unidades' ? 'btn-primary' : 'btn-secondary'} onClick={() => setMantModulo('unidades')} style={{flex: 1}}>
+                <button className={mantModulo === 'unidades' ? 'btn-primary' : 'btn-toggle'} onClick={() => setMantModulo('unidades')} style={{flex: 1, minWidth: '140px'}}>
                   Mantenimiento Unidades
                 </button>
               </div>
@@ -1705,7 +1581,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                 estandarizadas al momento de registrar un evento para {mantModulo}.
               </p>
               
-              <div style={{background: '#0f172a', padding: '1.5rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '2rem'}}>
+              <div style={{background: 'var(--card-bg)', padding: '1.5rem', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '2rem'}}>
                 <form onSubmit={async (e) => {
                   e.preventDefault()
                   if(!nuevoMantenimiento.trim()) return showAlert('Aviso', 'Ingrese un nombre válido.')
@@ -1720,7 +1596,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                     showAlert('Éxito', 'Tipo de mantenimiento agregado.')
                   }
                 }} style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
-                  <input type="text" placeholder="Ej: CAMBIO DE PISTOLA" value={nuevoMantenimiento} onChange={e => setNuevoMantenimiento(e.target.value)} required style={{flex: 1, padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155', minWidth: '200px'}} />
+                  <input type="text" placeholder="Ej: CAMBIO DE PISTOLA" value={nuevoMantenimiento} onChange={e => setNuevoMantenimiento(e.target.value)} required style={{flex: 1, padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)', minWidth: '200px'}} />
                   <button type="submit" className="btn-primary" style={{width: 'auto'}}>+ Añadir Tipo</button>
                 </form>
               </div>
@@ -1737,7 +1613,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                       <tr key={mt.id} style={{borderBottom: '1px solid rgba(255,255,255,0.05)'}}>
                         <td style={{padding: '1rem'}}>{mt.nombre}</td>
                         <td style={{padding: '1rem'}}>
-                          <button className="btn-text" style={{color: '#3b82f6', padding: '0', marginRight: '1rem'}} onClick={async () => {
+                          <button className="btn-text" style={{color: 'var(--primary)', padding: '0', marginRight: '1rem'}} onClick={async () => {
                             const nuevoNombre = window.prompt('Editar nombre del tipo de mantenimiento:', mt.nombre)
                             if (nuevoNombre && nuevoNombre.trim() && nuevoNombre.trim().toUpperCase() !== mt.nombre) {
                               const { error } = await supabase.from('mantenimiento_tipos').update({ nombre: nuevoNombre.trim().toUpperCase() }).eq('id', mt.id)
@@ -1750,7 +1626,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                             }
                           }}>Editar</button>
                           
-                          <button className="btn-text" style={{color: '#ef4444', padding: '0'}} onClick={async () => {
+                          <button className="btn-text" style={{color: 'var(--danger)', padding: '0'}} onClick={async () => {
                             if(window.confirm(`¿Eliminar "${mt.nombre}" del catálogo global?`)){
                               const { error } = await supabase.from('mantenimiento_tipos').delete().eq('id', mt.id)
                               if (error) showAlert('Error', 'No se pudo eliminar: ' + error.message)
@@ -1768,11 +1644,11 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
 
           {tab === 'config' && (
             <div className="table-container" style={{marginTop: '2rem'}}>
-                  <div style={{display: 'flex', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem'}}>
-                    <button className={configModulo === 'grifo' ? 'btn-primary' : 'btn-secondary'} onClick={() => setConfigModulo('grifo')} style={{flex: 1}}>
+                  <div style={{display: 'flex', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem', flexWrap: 'wrap'}}>
+                    <button className={configModulo === 'grifo' ? 'btn-primary' : 'btn-toggle'} onClick={() => setConfigModulo('grifo')} style={{flex: 1, minWidth: '140px'}}>
                       Configuración Grifos
                     </button>
-                    <button className={configModulo === 'unidades' ? 'btn-primary' : 'btn-secondary'} onClick={() => setConfigModulo('unidades')} style={{flex: 1}}>
+                    <button className={configModulo === 'unidades' ? 'btn-primary' : 'btn-toggle'} onClick={() => setConfigModulo('unidades')} style={{flex: 1, minWidth: '140px'}}>
                       Configuración Unidades
                     </button>
                   </div>
@@ -1793,24 +1669,24 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                     const isExpanded = expandedEstaciones.includes(est.id)
                     
                     return (
-                    <div key={est.id} style={{padding: '1.5rem', background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', marginBottom: '1.5rem'}}>
+                    <div key={est.id} style={{padding: '1.5rem', background: 'var(--card-bg)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 'var(--radius-lg)', marginBottom: '1.5rem'}}>
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isExpanded ? '1rem' : '0'}}>
                         <div>
-                          <h4 style={{fontSize: '1.1rem', color: '#3b82f6', marginBottom: '0.25rem'}}>{est.nombre}</h4>
-                          <small style={{color: '#94a3b8'}}>Productos: {est.productos_disponibles ? est.productos_disponibles.replace(/,/g, ', ') : 'No definidos'}</small>
+                          <h4 style={{fontSize: '1.1rem', color: 'var(--primary)', marginBottom: '0.25rem'}}>{est.nombre}</h4>
+                          <small style={{color: 'var(--text-muted)'}}>Productos: {est.productos_disponibles ? est.productos_disponibles.replace(/,/g, ', ') : 'No definidos'}</small>
                         </div>
                         <div style={{display: 'flex', gap: '0.5rem'}}>
-                          <button className="btn-secondary" style={{padding: '0.5rem 1rem'}} onClick={() => handleAddIslaToEstacion(est)}>
+                          <button className="btn-toggle" style={{padding: '0.5rem 1rem'}} onClick={() => handleAddIslaToEstacion(est)}>
                             + Añadir Isla
                           </button>
-                          <button className="btn-secondary" style={{padding: '0.5rem 1rem'}} onClick={() => toggleEstacion(est.id)}>
+                          <button className="btn-toggle" style={{padding: '0.5rem 1rem'}} onClick={() => toggleEstacion(est.id)}>
                             {isExpanded ? 'Ocultar Lados ▲' : 'Mostrar Lados ▼'}
                           </button>
                         </div>
                       </div>
                       
                       {isExpanded && (
-                        <table style={{background: '#1e293b', borderRadius: '8px', width: '100%', textAlign: 'left', borderCollapse: 'collapse', marginTop: '1rem'}}>
+                        <table style={{background: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)', width: '100%', textAlign: 'left', borderCollapse: 'collapse', marginTop: '1rem'}}>
                           <thead>
                             <tr style={{borderBottom: '1px solid rgba(255,255,255,0.1)'}}>
                               <th style={{padding: '1rem'}}>Isla</th>
@@ -1830,18 +1706,18 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                                       <tr key={`isla-${numIsla}-empty`} style={{borderBottom: '1px solid rgba(255,255,255,0.05)'}}>
                                         <td style={{padding: '1rem', fontWeight: 'bold'}}>Isla {numIsla}</td>
                                         <td colSpan="2" style={{padding: '1rem'}} className="text-muted">Sin configurar</td>
-                                        <td style={{padding: '1rem'}}><button className="btn-secondary" style={{padding: '0.25rem 0.75rem', fontSize: '0.85rem'}} onClick={() => openIslaModal(est, numIsla)}>+ Añadir Lados</button></td>
+                                        <td style={{padding: '1rem'}}><button className="btn-toggle" style={{padding: '0.25rem 0.75rem', fontSize: '0.85rem'}} onClick={() => openIslaModal(est, numIsla)}>+ Añadir Lados</button></td>
                                       </tr>
                                     )
                                   }
                                   return ladosEstaIsla.map((il, idx) => (
                                     <tr key={il.id} style={{borderBottom: '1px solid rgba(255,255,255,0.05)'}}>
-                                      <td style={{padding: '1rem', fontWeight: 'bold', color: idx === 0 ? '#e2e8f0' : 'transparent'}}>{idx === 0 ? `Isla ${numIsla}` : ''}</td>
+                                      <td style={{padding: '1rem', fontWeight: 'bold', color: idx === 0 ? 'var(--text-soft)' : 'transparent'}}>{idx === 0 ? `Isla ${numIsla}` : ''}</td>
                                       <td style={{padding: '1rem'}}>Lado {il.lado}</td>
                                       <td style={{padding: '1rem'}}>{il.productos}</td>
                                       <td style={{padding: '1rem'}}>
-                                        {idx === 0 && <button className="btn-text" style={{color: '#3b82f6', marginRight: '1rem', padding: 0}} onClick={() => openIslaModal(est, numIsla)}>+ Lado</button>}
-                                        <button className="btn-text" style={{color: '#ef4444', padding: 0}} onClick={() => handleDisableIslaLado(il.id)}>Desactivar</button>
+                                        {idx === 0 && <button className="btn-text" style={{color: 'var(--primary)', marginRight: '1rem', padding: 0}} onClick={() => openIslaModal(est, numIsla)}>+ Lado</button>}
+                                        <button className="btn-text" style={{color: 'var(--danger)', padding: 0}} onClick={() => handleDisableIslaLado(il.id)}>Desactivar</button>
                                       </td>
                                     </tr>
                                   ))
@@ -1859,7 +1735,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                 <>
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem'}}>
                     <h3 style={{margin: 0}}>Gestión de Unidades (Tractos y Carretas)</h3>
-                    <button className="btn-secondary" onClick={async () => {
+                    <button className="btn-toggle" onClick={async () => {
                       const data = [
                         { TRACTOS: "CHH815", CARRETA: "ARP977", " Tipos de Mantenimiento": "CAMBIO DE LLANTAS", PRODUCTO: "FRENOS MARCA AG", "STOCK ": 6.0 },
                         { TRACTOS: "BUU917", CARRETA: "ANV974", " Tipos de Mantenimiento": "CAMBIO DE BOMBA DE AGUA ", PRODUCTO: "FRENOS MARCA BH", "STOCK ": 1.0 },
@@ -1896,10 +1772,10 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                   </div>
                   
                   <div className="grid-2">
-                    <div style={{background: '#0f172a', padding: '1.5rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)'}}>
+                    <div style={{background: 'var(--card-bg)', padding: '1.5rem', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(255,255,255,0.1)'}}>
                       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
-                        <h4 style={{color: '#3b82f6', margin: 0}}>Tractos</h4>
-                        <button className="btn-secondary" style={{padding: '0.25rem 0.75rem', fontSize: '0.8rem'}} onClick={() => setIsTractosExpanded(!isTractosExpanded)}>
+                        <h4 style={{color: 'var(--primary)', margin: 0}}>Tractos</h4>
+                        <button className="btn-toggle" style={{padding: '0.25rem 0.75rem', fontSize: '0.8rem'}} onClick={() => setIsTractosExpanded(!isTractosExpanded)}>
                           {isTractosExpanded ? 'Ocultar ▲' : 'Mostrar ▼'}
                         </button>
                       </div>
@@ -1922,7 +1798,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                               showAlert('Éxito', 'Tracto agregado.')
                             }
                           }} style={{display: 'flex', gap: '0.5rem', marginBottom: '1rem'}}>
-                            <input type="text" placeholder="Placa Tracto" value={nuevoTracto} onChange={e => setNuevoTracto(e.target.value)} required style={{flex: 1, padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}} />
+                            <input type="text" placeholder="Placa Tracto" value={nuevoTracto} onChange={e => setNuevoTracto(e.target.value)} required style={{flex: 1, padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)'}} />
                             <button type="submit" className="btn-primary" style={{width: 'auto', padding: '0.5rem 1rem'}}>+</button>
                           </form>
                           
@@ -1936,7 +1812,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                                     <tr key={t.id} style={{borderBottom: '1px solid rgba(255,255,255,0.05)'}}>
                                       <td style={{padding: '0.75rem'}}>{t.placa}</td>
                                       <td style={{padding: '0.75rem', textAlign: 'right'}}>
-                                        <button className="btn-text" style={{color: '#ef4444', padding: 0}} onClick={async () => {
+                                        <button className="btn-text" style={{color: 'var(--danger)', padding: 0}} onClick={async () => {
                                           if(window.confirm(`¿Eliminar tracto ${t.placa}?`)){
                                             const { error } = await supabase.from('unidades_tractos').delete().eq('id', t.id)
                                             if(error) showAlert('Error', error.message)
@@ -1954,10 +1830,10 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                       )}
                     </div>
 
-                <div style={{background: '#0f172a', padding: '1.5rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)'}}>
+                <div style={{background: 'var(--card-bg)', padding: '1.5rem', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(255,255,255,0.1)'}}>
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
-                    <h4 style={{color: '#3b82f6', margin: 0}}>Carretas</h4>
-                    <button className="btn-secondary" style={{padding: '0.25rem 0.75rem', fontSize: '0.8rem'}} onClick={() => setIsCarretasExpanded(!isCarretasExpanded)}>
+                    <h4 style={{color: 'var(--primary)', margin: 0}}>Carretas</h4>
+                    <button className="btn-toggle" style={{padding: '0.25rem 0.75rem', fontSize: '0.8rem'}} onClick={() => setIsCarretasExpanded(!isCarretasExpanded)}>
                       {isCarretasExpanded ? 'Ocultar ▲' : 'Mostrar ▼'}
                     </button>
                   </div>
@@ -1980,7 +1856,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                           showAlert('Éxito', 'Carreta agregada.')
                         }
                       }} style={{display: 'flex', gap: '0.5rem', marginBottom: '1rem'}}>
-                        <input type="text" placeholder="Placa Carreta" value={nuevaCarreta} onChange={e => setNuevaCarreta(e.target.value)} required style={{flex: 1, padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}} />
+                        <input type="text" placeholder="Placa Carreta" value={nuevaCarreta} onChange={e => setNuevaCarreta(e.target.value)} required style={{flex: 1, padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)'}} />
                         <button type="submit" className="btn-primary" style={{width: 'auto', padding: '0.5rem 1rem'}}>+</button>
                       </form>
                       
@@ -1994,7 +1870,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                                 <tr key={c.id} style={{borderBottom: '1px solid rgba(255,255,255,0.05)'}}>
                                   <td style={{padding: '0.75rem'}}>{c.placa}</td>
                                   <td style={{padding: '0.75rem', textAlign: 'right'}}>
-                                    <button className="btn-text" style={{color: '#ef4444', padding: 0}} onClick={async () => {
+                                    <button className="btn-text" style={{color: 'var(--danger)', padding: 0}} onClick={async () => {
                                       if(window.confirm(`¿Eliminar carreta ${c.placa}?`)){
                                         const { error } = await supabase.from('unidades_carretas').delete().eq('id', c.id)
                                         if(error) showAlert('Error', error.message)
@@ -2021,23 +1897,23 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
 
           {estacionModal.isOpen && (
             <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000}}>
-              <div style={{background: '#0f172a', padding: '2rem', borderRadius: '12px', border: '1px solid #3b82f6', minWidth: '400px'}}>
+              <div style={{background: 'var(--card-bg)', padding: '2rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-soft)', boxShadow: 'var(--shadow-float)', minWidth: '400px'}}>
                 <h3 className="mb-4">Crear Estación Nueva</h3>
                 <form onSubmit={handleSaveEstacionModal}>
                   <div className="mb-4">
-                    <label style={{display: 'block', marginBottom: '0.5rem', color: '#94a3b8'}}>Nombre de la Estación</label>
-                    <input type="text" required value={estacionModal.nombre} onChange={e => setEstacionModal({...estacionModal, nombre: e.target.value})} style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}} placeholder="Ej: Estación Curve" />
+                    <label style={{display: 'block', marginBottom: '0.5rem', color: 'var(--text-muted)'}}>Nombre de la Estación</label>
+                    <input type="text" required value={estacionModal.nombre} onChange={e => setEstacionModal({...estacionModal, nombre: e.target.value})} style={{width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)'}} placeholder="Ej: Estación Curve" />
                   </div>
                   
                   <div className="mb-4">
-                    <label style={{display: 'block', marginBottom: '0.5rem', color: '#94a3b8'}}>Productos que dispensa (Ingresa uno por uno)</label>
+                    <label style={{display: 'block', marginBottom: '0.5rem', color: 'var(--text-muted)'}}>Productos que dispensa (Ingresa uno por uno)</label>
                     <div style={{display: 'flex', gap: '0.5rem'}}>
-                      <input type="text" value={estacionModal.productosStr} onChange={e => setEstacionModal({...estacionModal, productosStr: e.target.value})} onKeyDown={e => {if (e.key === 'Enter') handleAddProductoToEstacion(e)}} style={{flex: 1, padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}} placeholder="Ej: GR" />
-                      <button type="button" className="btn-secondary" onClick={handleAddProductoToEstacion}>Añadir</button>
+                      <input type="text" value={estacionModal.productosStr} onChange={e => setEstacionModal({...estacionModal, productosStr: e.target.value})} onKeyDown={e => {if (e.key === 'Enter') handleAddProductoToEstacion(e)}} style={{flex: 1, padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)'}} placeholder="Ej: GR" />
+                      <button type="button" className="btn-toggle" onClick={handleAddProductoToEstacion}>Añadir</button>
                     </div>
                     <div style={{display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '1rem'}}>
                       {estacionModal.productosList.map(prod => (
-                        <span key={prod} style={{background: '#3b82f6', color: 'white', padding: '0.25rem 0.75rem', borderRadius: '999px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+                        <span key={prod} style={{background: 'var(--primary)', color: 'white', padding: '0.25rem 0.75rem', borderRadius: '999px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
                           {prod}
                           <button type="button" onClick={() => setEstacionModal({...estacionModal, productosList: estacionModal.productosList.filter(p=>p!==prod)})} style={{background: 'none', border: 'none', color: 'white', cursor: 'pointer', padding: 0, fontWeight: 'bold'}}>×</button>
                         </span>
@@ -2047,13 +1923,13 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
                   </div>
 
                   <div className="mb-4">
-                    <label style={{display: 'block', marginBottom: '0.5rem', color: '#94a3b8'}}>Cantidad de Islas</label>
-                    <input type="number" required min="1" value={estacionModal.cantidadIslas} onChange={e => setEstacionModal({...estacionModal, cantidadIslas: parseInt(e.target.value)})} style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}} placeholder="Ej: 4" />
+                    <label style={{display: 'block', marginBottom: '0.5rem', color: 'var(--text-muted)'}}>Cantidad de Islas</label>
+                    <input type="number" required min="1" value={estacionModal.cantidadIslas} onChange={e => setEstacionModal({...estacionModal, cantidadIslas: parseInt(e.target.value)})} style={{width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)'}} placeholder="Ej: 4" />
                   </div>
 
                   <div style={{display: 'flex', gap: '1rem', marginTop: '2rem'}}>
                     <button type="submit" className="btn-primary" style={{flex: 1}}>Crear Estación</button>
-                    <button type="button" className="btn-secondary" style={{flex: 1}} onClick={() => setEstacionModal({ isOpen: false, nombre: '', productosStr: '', productosList: [], cantidadIslas: 1 })}>Cancelar</button>
+                    <button type="button" className="btn-toggle" style={{flex: 1}} onClick={() => setEstacionModal({ isOpen: false, nombre: '', productosStr: '', productosList: [], cantidadIslas: 1 })}>Cancelar</button>
                   </div>
                 </form>
               </div>
@@ -2062,25 +1938,25 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
 
           {islaModal.isOpen && islaModal.estacion && (
             <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000}}>
-              <div style={{background: '#0f172a', padding: '2rem', borderRadius: '12px', border: '1px solid #3b82f6', minWidth: '400px'}}>
+              <div style={{background: 'var(--card-bg)', padding: '2rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-soft)', boxShadow: 'var(--shadow-float)', minWidth: '400px'}}>
                 <h3 className="mb-4">Configurar Isla {islaModal.isla} - {islaModal.estacion.nombre}</h3>
                 <form onSubmit={handleSaveIslaModal}>
                   <div className="mb-4" style={{display: 'none'}}>
-                    <label style={{display: 'block', marginBottom: '0.5rem', color: '#94a3b8'}}>Número de Isla</label>
-                    <input type="number" required min="1" value={islaModal.isla} onChange={e => setIslaModal({...islaModal, isla: e.target.value})} style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}} readOnly />
+                    <label style={{display: 'block', marginBottom: '0.5rem', color: 'var(--text-muted)'}}>Número de Isla</label>
+                    <input type="number" required min="1" value={islaModal.isla} onChange={e => setIslaModal({...islaModal, isla: e.target.value})} style={{width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)'}} readOnly />
                   </div>
                   
                   <div className="mb-4">
-                    <label style={{display: 'block', marginBottom: '0.5rem', color: '#94a3b8'}}>Lados a Configurar (Separados por coma)</label>
-                    <input type="text" required value={islaModal.ladosStr} onChange={e => setIslaModal({...islaModal, ladosStr: e.target.value})} style={{width: '100%', padding: '0.5rem', borderRadius: '4px', background: '#1e293b', color: 'white', border: '1px solid #334155'}} placeholder="Ej: 1, 2" />
-                    <small style={{color: '#64748b', display: 'block', marginTop: '0.25rem'}}>Puedes ingresar múltiples lados a la vez si comparten los mismos productos.</small>
+                    <label style={{display: 'block', marginBottom: '0.5rem', color: 'var(--text-muted)'}}>Lados a Configurar (Separados por coma)</label>
+                    <input type="text" required value={islaModal.ladosStr} onChange={e => setIslaModal({...islaModal, ladosStr: e.target.value})} style={{width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'white', border: '1px solid var(--border-soft)'}} placeholder="Ej: 1, 2" />
+                    <small style={{color: 'var(--text-muted)', display: 'block', marginTop: '0.25rem'}}>Puedes ingresar múltiples lados a la vez si comparten los mismos productos.</small>
                   </div>
 
                   <div className="mb-4">
-                    <label style={{display: 'block', marginBottom: '0.5rem', color: '#94a3b8'}}>Productos (Del inventario de la estación)</label>
+                    <label style={{display: 'block', marginBottom: '0.5rem', color: 'var(--text-muted)'}}>Productos (Del inventario de la estación)</label>
                     <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem'}}>
                       {(islaModal.estacion.productos_disponibles ? islaModal.estacion.productos_disponibles.split(',') : []).map(prod => (
-                        <label key={prod} style={{display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#1e293b', padding: '0.5rem', borderRadius: '4px', border: '1px solid #334155', cursor: 'pointer'}}>
+                        <label key={prod} style={{display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-elevated)', padding: '0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-soft)', cursor: 'pointer'}}>
                           <input type="checkbox" checked={islaModal.productos.includes(prod)} onChange={e => {
                             if (e.target.checked) setIslaModal({...islaModal, productos: [...islaModal.productos, prod]})
                             else setIslaModal({...islaModal, productos: islaModal.productos.filter(p=>p!==prod)})
@@ -2092,7 +1968,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
 
                   <div style={{display: 'flex', gap: '1rem', marginTop: '2rem'}}>
                     <button type="submit" className="btn-primary" style={{flex: 1}}>Guardar Configuración</button>
-                    <button type="button" className="btn-secondary" style={{flex: 1}} onClick={() => setIslaModal({...islaModal, isOpen: false})}>Cancelar</button>
+                    <button type="button" className="btn-toggle" style={{flex: 1}} onClick={() => setIslaModal({...islaModal, isOpen: false})}>Cancelar</button>
                   </div>
                 </form>
               </div>
@@ -2101,14 +1977,14 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
 
           {appModal.isOpen && (
             <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999}}>
-              <div style={{background: '#0f172a', padding: '2rem', borderRadius: '12px', border: '1px solid #3b82f6', minWidth: '350px', maxWidth: '500px', textAlign: 'center'}}>
-                <h3 style={{marginBottom: '1rem', color: appModal.type === 'alert' && appModal.title === 'Error' ? '#ef4444' : '#3b82f6'}}>{appModal.title}</h3>
-                <p style={{marginBottom: '2rem', color: '#e2e8f0'}}>{appModal.message}</p>
+              <div style={{background: 'var(--card-bg)', padding: '2rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-soft)', boxShadow: 'var(--shadow-float)', minWidth: '350px', maxWidth: '500px', textAlign: 'center'}}>
+                <h3 style={{marginBottom: '1rem', color: appModal.type === 'alert' && appModal.title === 'Error' ? 'var(--danger)' : 'var(--primary)'}}>{appModal.title}</h3>
+                <p style={{marginBottom: '2rem', color: 'var(--text-soft)'}}>{appModal.message}</p>
                 <div style={{display: 'flex', gap: '1rem', justifyContent: 'center'}}>
                   {appModal.type === 'confirm' ? (
                     <>
                       <button className="btn-primary" onClick={() => { appModal.onConfirm(); setAppModal({...appModal, isOpen: false}) }}>Aceptar</button>
-                      <button className="btn-secondary" onClick={() => setAppModal({...appModal, isOpen: false})}>Cancelar</button>
+                      <button className="btn-toggle" onClick={() => setAppModal({...appModal, isOpen: false})}>Cancelar</button>
                     </>
                   ) : (
                     <button className="btn-primary" onClick={() => setAppModal({...appModal, isOpen: false})}>Entendido</button>
@@ -2148,7 +2024,7 @@ export default function Gerencia({ onLogout, user, onSwitchView, onEditReport })
               onError={() => setPreviewLoading(false)}
               onSwipeLeft={previewGallery.length > 1 ? showNextPreview : undefined}
               onSwipeRight={previewGallery.length > 1 ? showPrevPreview : undefined}
-              style={{maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: '8px', opacity: previewLoading ? 0 : 1, transition: 'opacity 0.15s'}}
+              style={{maxWidth: '90%', maxHeight: '90%', objectFit: 'contain', borderRadius: 'var(--radius-md)', opacity: previewLoading ? 0 : 1, transition: 'opacity 0.15s'}}
             />
           </div>
         )}
