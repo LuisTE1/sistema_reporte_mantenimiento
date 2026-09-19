@@ -10,6 +10,7 @@ export default function VisorSoluciones({ reportes, user, estacionesPermitidas, 
   const [visorModulo, setVisorModulo] = useState('grifo')
   const [filtroEstaciones, setFiltroEstaciones] = useState([])
   const [busquedaPlaca, setBusquedaPlaca] = useState('')
+  const [verTodosPendientes, setVerTodosPendientes] = useState(false)
 
   const puedeVerGrifos = user.permisos.verGrifos !== false
   const puedeVerUnidades = user.permisos.verUnidades === true
@@ -26,9 +27,12 @@ export default function VisorSoluciones({ reportes, user, estacionesPermitidas, 
     setFiltroEstaciones(prev => prev.includes(estNombre) ? prev.filter(e => e !== estNombre) : [...prev, estNombre])
   }
 
+  // Solo los pendientes del módulo que se está viendo ahora mismo — si
+  // estás en Soluciones Grifos, no tiene sentido que este aviso mezcle
+  // pendientes de Unidades (y viceversa).
   const pendientes = reportes
     .filter(r => (r.estado || 'Pendiente') !== 'Resuelto')
-    .filter(r => (r.modulo === 'unidades' ? puedeVerUnidades : puedeVerGrifos))
+    .filter(r => (r.modulo === 'unidades' ? visorModuloEfectivo === 'unidades' : visorModuloEfectivo === 'grifo'))
     .map(r => ({ ...r, dias: diasTranscurridos(r.creado_en, null) }))
     .sort((a, b) => b.dias - a.dias)
 
@@ -50,8 +54,8 @@ export default function VisorSoluciones({ reportes, user, estacionesPermitidas, 
       {pendientes.length > 0 && (
         <div style={{background: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--danger)', borderRadius: 'var(--radius-md)', padding: '1rem', marginBottom: '1.5rem'}}>
           <p style={{color: 'var(--danger)', fontWeight: 'bold', marginBottom: '0.75rem'}}>⚠️ {pendientes.length} reporte(s) sin resolver — dale prioridad a los más antiguos:</p>
-          <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
-            {pendientes.slice(0, 5).map(r => (
+          <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: verTodosPendientes ? '320px' : 'none', overflowY: verTodosPendientes ? 'auto' : 'visible'}}>
+            {(verTodosPendientes ? pendientes : pendientes.slice(0, 5)).map(r => (
               <div key={r.id} onClick={() => setReporteModal(r)} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--card-bg)', padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-sm)', cursor: 'pointer', gap: '0.5rem', flexWrap: 'wrap'}}>
                 <span style={{fontSize: '0.85rem', color: 'var(--text-soft)'}}><strong>{r.motivo}</strong> · {r.tracto_placa || r.carreta_placa ? `${r.tracto_placa || ''} ${r.carreta_placa || ''}`.trim() : r.estacion_id}</span>
                 <span style={{fontSize: '0.75rem', fontWeight: 'bold', color: colorDeEstado(r.estado), background: colorDeEstado(r.estado) + '22', padding: '0.15rem 0.6rem', borderRadius: '999px', whiteSpace: 'nowrap'}}>
@@ -60,15 +64,20 @@ export default function VisorSoluciones({ reportes, user, estacionesPermitidas, 
               </div>
             ))}
           </div>
+          {pendientes.length > 5 && (
+            <button type="button" className="btn-text" style={{marginTop: '0.75rem', padding: 0, fontSize: '0.85rem', color: 'var(--danger)'}} onClick={() => setVerTodosPendientes(v => !v)}>
+              {verTodosPendientes ? 'Ver menos ▲' : `Ver los ${pendientes.length - 5} restantes ▼`}
+            </button>
+          )}
         </div>
       )}
 
       {puedeVerGrifos && puedeVerUnidades && (
         <div style={{display: 'flex', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem', flexWrap: 'wrap'}}>
-          <button className={visorModulo === 'grifo' ? 'btn-primary' : 'btn-toggle'} onClick={() => setVisorModulo('grifo')} style={{flex: 1, minWidth: '140px'}}>
+          <button className={visorModulo === 'grifo' ? 'btn-primary' : 'btn-toggle'} onClick={() => { setVisorModulo('grifo'); setVerTodosPendientes(false) }} style={{flex: 1, minWidth: '140px'}}>
             Soluciones Grifos
           </button>
-          <button className={visorModulo === 'unidades' ? 'btn-primary' : 'btn-toggle'} onClick={() => setVisorModulo('unidades')} style={{flex: 1, minWidth: '140px'}}>
+          <button className={visorModulo === 'unidades' ? 'btn-primary' : 'btn-toggle'} onClick={() => { setVisorModulo('unidades'); setVerTodosPendientes(false) }} style={{flex: 1, minWidth: '140px'}}>
             Soluciones Unidades
           </button>
         </div>
