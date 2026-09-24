@@ -8,6 +8,7 @@ import { initNetworkListener, syncOfflineReports } from './utils/offlineQueue'
 import { handleBack } from './utils/backButton'
 import { setUsuarioParaErrores } from './utils/errorLogger'
 import { registrarPushNotifications, escucharAperturaDeReporte } from './utils/push'
+import { registrarPushWeb, leerReporteDesdeUrl } from './utils/pushWeb'
 
 export default function App() {
   const [user, setUser] = useState(() => {
@@ -27,11 +28,21 @@ export default function App() {
   // escucha cuando el usuario toca una notificación para abrir ese
   // reporte directo (sin importar en qué pantalla esté).
   useEffect(() => {
-    if (user) registrarPushNotifications(user)
+    if (user) {
+      registrarPushNotifications(user)
+      registrarPushWeb(user)
+    }
   }, [user?.id])
 
   useEffect(() => {
     return escucharAperturaDeReporte((reporteId) => setPendingReportId(reporteId))
+  }, [])
+
+  // Se tocó una notificación push web (llega como "?reporte=ID" en la URL,
+  // ver src/sw.js) — abre ese reporte directo, igual que en la app nativa.
+  useEffect(() => {
+    const idDesdeUrl = leerReporteDesdeUrl()
+    if (idDesdeUrl) setPendingReportId(idDesdeUrl)
   }, [])
 
   const handleLogout = () => {

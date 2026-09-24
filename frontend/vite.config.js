@@ -11,7 +11,12 @@ export default defineConfig({
       // Android (Capacitor) — ahí ya se sirve todo localmente empaquetado
       // y un service worker de caché no aporta nada, solo puede interferir.
       injectRegister: false,
-      registerType: 'autoUpdate',
+      // Estrategia "injectManifest": usamos nuestro propio src/sw.js (no uno
+      // generado automáticamente) porque necesita código propio para recibir
+      // las notificaciones push web y abrir el reporte correcto al tocarlas.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
       manifest: {
         name: 'Control Operativo - Mantenimiento',
         short_name: 'Control Operativo',
@@ -26,7 +31,7 @@ export default defineConfig({
           { src: 'pwa-icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
         ],
       },
-      workbox: {
+      injectManifest: {
         // Precachea el "shell" de la app (JS/CSS/HTML) para que abra
         // instantáneo y funcione offline; los datos siguen viniendo de
         // Supabase en vivo (esto no cachea las respuestas de la API).
