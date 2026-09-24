@@ -11,11 +11,6 @@ import { Capacitor } from '@capacitor/core'
 const stack = []
 let uid = 0
 let popstateListenerAdded = false
-// Se pone en true mientras nosotros mismos movemos el historial (al cerrar
-// algo con un botón en pantalla, no con el gesto) para no procesar el
-// "atrás" dos veces — una por el cierre normal y otra por el popstate que
-// dispara nuestro propio history.back().
-let handlingOwnHistoryMove = false
 
 export function pushBackHandler(id, handler, priority) {
   const idx = stack.findIndex(h => h.id === id)
@@ -48,7 +43,6 @@ function ensurePopstateListener() {
   if (popstateListenerAdded || Capacitor.isNativePlatform()) return
   popstateListenerAdded = true
   window.addEventListener('popstate', () => {
-    if (handlingOwnHistoryMove) return
     handleBack()
   })
 }
@@ -74,22 +68,20 @@ export function useBackHandler(active, onBack, priority = 0) {
     // En web, deja una entrada en el historial para que el gesto de
     // deslizar tenga algo a lo que "volver" — sin esto, no hay nada que el
     // gesto pueda deshacer y no pasa nada al deslizar.
-    const enWeb = !Capacitor.isNativePlatform()
-    if (enWeb) {
+    //
+    // A propósito NO se intenta "deshacer" esta entrada cuando se cierra
+    // con un botón en pantalla (en vez del gesto): tratar de sincronizar
+    // el historial del navegador con cada cierre programático es frágil —
+    // si un cierre dispara otro en cadena, se puede terminar retrocediendo
+    // de más y saliendo de la app de golpe. Es preferible que, a veces,
+    // sobre una entrada "muerta" (un deslizón que no hace nada) a que el
+    // gesto saque a alguien de la app sin querer.
+    if (!Capacitor.isNativePlatform()) {
       window.history.pushState({ backHandlerId: id }, '')
     }
 
     return () => {
       popBackHandler(id)
-      // Si esto se cerró con un botón en pantalla (no con el gesto), hay
-      // que consumir la entrada de historial que se agregó al abrir, para
-      // no dejar "huecos" que exijan un gesto de más adelante sin que haga
-      // nada visible.
-      if (enWeb && window.history.state?.backHandlerId === id) {
-        handlingOwnHistoryMove = true
-        window.history.back()
-        setTimeout(() => { handlingOwnHistoryMove = false }, 100)
-      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, priority])
