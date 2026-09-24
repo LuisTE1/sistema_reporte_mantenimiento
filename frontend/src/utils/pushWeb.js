@@ -1,6 +1,5 @@
 import { Capacitor } from '@capacitor/core'
 import { supabase } from '../supabaseClient'
-import { debugLog } from './debugOverlay'
 
 // Llave pública VAPID — es pública a propósito (va en el navegador de
 // cualquiera), la privada nunca sale de la Edge Function de Supabase.
@@ -20,35 +19,16 @@ function urlBase64ToUint8Array(base64String) {
 // para navegador.
 export async function registrarPushWeb(usuario) {
   if (Capacitor.isNativePlatform() || !usuario?.id) return
-  debugLog('iniciando registro de push web para usuario ' + usuario?.nombre)
-
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    debugLog('este navegador no soporta Push (serviceWorker o PushManager ausente)')
-    return
-  }
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
 
   try {
     let permiso = Notification.permission
-    debugLog('permiso actual: ' + permiso)
     if (permiso === 'default') {
       permiso = await Notification.requestPermission()
-      debugLog('permiso luego de pedirlo: ' + permiso)
     }
-    if (permiso !== 'granted') {
-      debugLog('permiso no concedido, se detiene acá')
-      return
-    }
+    if (permiso !== 'granted') return
 
-    const regs = await navigator.serviceWorker.getRegistrations()
-    debugLog('registros de service worker existentes: ' + regs.length)
-    regs.forEach((r, i) => debugLog(`  #${i}: scope=${r.scope} active=${!!r.active} installing=${!!r.installing} waiting=${!!r.waiting}`))
-    debugLog('controller actual: ' + (navigator.serviceWorker.controller ? navigator.serviceWorker.controller.scriptURL : 'ninguno'))
-
-    debugLog('esperando que el service worker esté listo (máx 10s)...')
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT_SW_READY')), 10000))
-    const registration = await Promise.race([navigator.serviceWorker.ready, timeoutPromise])
-    debugLog('service worker listo, pidiendo suscripción...')
-
+    const registration = await navigator.serviceWorker.ready
     let subscription = await registration.pushManager.getSubscription()
     if (!subscription) {
       subscription = await registration.pushManager.subscribe({
@@ -56,15 +36,10 @@ export async function registrarPushWeb(usuario) {
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
       })
     }
-    debugLog('suscripción obtenida: ' + subscription.endpoint.slice(0, 50) + '...')
 
     const json = subscription.toJSON()
-    if (!json.endpoint || !json.keys) {
-      debugLog('la suscripción no trajo endpoint/keys')
-      return
-    }
+    if (!json.endpoint || !json.keys) return
 
-    debugLog('guardando en Supabase (usuario_id=' + usuario.id + ')...')
     const { error } = await supabase.from('push_subscriptions_web').upsert(
       {
         usuario_id: usuario.id,
@@ -75,14 +50,8 @@ export async function registrarPushWeb(usuario) {
       },
       { onConflict: 'endpoint' }
     )
-    if (error) {
-      debugLog('ERROR guardando en Supabase: ' + error.message)
-      console.error('No se pudo guardar la suscripción push web:', error)
-    } else {
-      debugLog('¡guardado con éxito!')
-    }
+    if (error) console.error('No se pudo guardar la suscripción push web:', error)
   } catch (e) {
-    debugLog('EXCEPCIÓN: ' + (e?.message || String(e)))
     console.warn('No se pudo registrar la suscripción push web:', e)
   }
 }
