@@ -17,18 +17,31 @@ function urlBase64ToUint8Array(base64String) {
 // directo (ver utils/push.js). Sin esto, un iPhone con la PWA instalada no
 // tenía forma de recibir avisos: el plugin de Capacitor no tiene versión
 // para navegador.
+// DEBUG_ALERT: quítalo apenas quede confirmado que la suscripción se está
+// guardando bien — es solo para ver en el celular, sin herramientas de
+// desarrollador, en qué paso exacto se corta.
+const DEBUG_ALERT = true
+
 export async function registrarPushWeb(usuario) {
   if (Capacitor.isNativePlatform() || !usuario?.id) return
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    if (DEBUG_ALERT) alert('DEBUG push: este navegador no soporta Push (serviceWorker o PushManager ausente)')
+    return
+  }
 
   try {
     let permiso = Notification.permission
     if (permiso === 'default') {
       permiso = await Notification.requestPermission()
     }
-    if (permiso !== 'granted') return
+    if (permiso !== 'granted') {
+      if (DEBUG_ALERT) alert('DEBUG push: permiso de notificaciones = ' + permiso)
+      return
+    }
 
     const registration = await navigator.serviceWorker.ready
+    if (DEBUG_ALERT) alert('DEBUG push: service worker listo, pidiendo suscripción...')
+
     let subscription = await registration.pushManager.getSubscription()
     if (!subscription) {
       subscription = await registration.pushManager.subscribe({
@@ -36,11 +49,15 @@ export async function registrarPushWeb(usuario) {
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
       })
     }
+    if (DEBUG_ALERT) alert('DEBUG push: suscripción obtenida, endpoint: ' + subscription.endpoint.slice(0, 60) + '...')
 
     const json = subscription.toJSON()
-    if (!json.endpoint || !json.keys) return
+    if (!json.endpoint || !json.keys) {
+      if (DEBUG_ALERT) alert('DEBUG push: la suscripción no trajo endpoint/keys')
+      return
+    }
 
-    await supabase.from('push_subscriptions_web').upsert(
+    const { error } = await supabase.from('push_subscriptions_web').upsert(
       {
         usuario_id: usuario.id,
         endpoint: json.endpoint,
@@ -50,7 +67,14 @@ export async function registrarPushWeb(usuario) {
       },
       { onConflict: 'endpoint' }
     )
+    if (error) {
+      if (DEBUG_ALERT) alert('DEBUG push: error guardando en Supabase: ' + error.message)
+      console.error('No se pudo guardar la suscripción push web:', error)
+    } else if (DEBUG_ALERT) {
+      alert('DEBUG push: ¡guardado con éxito!')
+    }
   } catch (e) {
+    if (DEBUG_ALERT) alert('DEBUG push: excepción: ' + (e?.message || String(e)))
     console.warn('No se pudo registrar la suscripción push web:', e)
   }
 }
