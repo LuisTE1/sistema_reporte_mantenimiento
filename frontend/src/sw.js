@@ -14,7 +14,23 @@ const PRECACHE_URLS = self.__WB_MANIFEST.map((entry) => (typeof entry === 'strin
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(PRECACHE_URLS))
+      .then((cache) =>
+        // cache.addAll() es "todo o nada": si UN solo archivo falla al
+        // descargarse, cancela la instalación entera y el service worker se
+        // queda parado para siempre (nunca llega a "activo") — sin avisar
+        // nada, solo hace que serviceWorker.ready nunca se resuelva. Con
+        // allSettled, un archivo que falle no tumba a los demás.
+        Promise.allSettled(
+          PRECACHE_URLS.map((url) =>
+            fetch(url).then((res) => {
+              if (res.ok) return cache.put(url, res)
+              console.warn('[sw] no se pudo precachear (status ' + res.status + '):', url)
+            }).catch((err) => {
+              console.warn('[sw] no se pudo precachear:', url, err)
+            })
+          )
+        )
+      )
       .then(() => self.skipWaiting())
   )
 })
