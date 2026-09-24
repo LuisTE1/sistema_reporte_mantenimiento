@@ -1,5 +1,6 @@
 import { Capacitor } from '@capacitor/core'
 import { supabase } from '../supabaseClient'
+import { debugLog } from './debugOverlay'
 
 // Llave pública VAPID — es pública a propósito (va en el navegador de
 // cualquiera), la privada nunca sale de la Edge Function de Supabase.
@@ -10,27 +11,6 @@ function urlBase64ToUint8Array(base64String) {
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
   const rawData = atob(base64)
   return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)))
-}
-
-// DEBUG_OVERLAY: quítalo apenas quede confirmado que la suscripción se
-// está guardando bien — es un recuadro fijo en pantalla (no un alert(),
-// que iOS empieza a bloquear después de 1-2 seguidos) para ver, sin
-// herramientas de desarrollador, en qué paso exacto se corta.
-const DEBUG_OVERLAY = true
-
-function debugLog(msg) {
-  if (!DEBUG_OVERLAY) return
-  console.log('[push-debug]', msg)
-  let box = document.getElementById('push-debug-box')
-  if (!box) {
-    box = document.createElement('div')
-    box.id = 'push-debug-box'
-    box.style.cssText = 'position:fixed; left:8px; right:8px; bottom:8px; max-height:50vh; overflow:auto; background:rgba(0,0,0,0.9); color:#0f0; font:11px monospace; padding:8px; border-radius:8px; z-index:999999; white-space:pre-wrap;'
-    document.body.appendChild(box)
-  }
-  const line = document.createElement('div')
-  line.textContent = `${new Date().toLocaleTimeString()} — ${msg}`
-  box.appendChild(line)
 }
 
 // Notificaciones push para la versión instalable (PWA) en navegador — solo
@@ -59,8 +39,14 @@ export async function registrarPushWeb(usuario) {
       return
     }
 
-    debugLog('esperando que el service worker esté listo...')
-    const registration = await navigator.serviceWorker.ready
+    const regs = await navigator.serviceWorker.getRegistrations()
+    debugLog('registros de service worker existentes: ' + regs.length)
+    regs.forEach((r, i) => debugLog(`  #${i}: scope=${r.scope} active=${!!r.active} installing=${!!r.installing} waiting=${!!r.waiting}`))
+    debugLog('controller actual: ' + (navigator.serviceWorker.controller ? navigator.serviceWorker.controller.scriptURL : 'ninguno'))
+
+    debugLog('esperando que el service worker esté listo (máx 10s)...')
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT_SW_READY')), 10000))
+    const registration = await Promise.race([navigator.serviceWorker.ready, timeoutPromise])
     debugLog('service worker listo, pidiendo suscripción...')
 
     let subscription = await registration.pushManager.getSubscription()
