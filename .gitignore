@@ -6,3 +6,17 @@ android/local.properties
 android/app/release/
 *.log
 .DS_Store
+
+# Secretos y credenciales (el repo es público)
+google-services.json
+.env
+.env.*
+*.jks
+*.keystore
+*.pem
+*.key
+*.p12
+
+# Herramientas locales de Claude Code (no son parte del proyecto)
+.claude/
+.agents/
